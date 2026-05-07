@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'db'))
 
-from jsontocsv import generate_csvs, normalize_degree_level, extract_university_name, extract_program_name
+from db.jsontocsv import generate_csvs, normalize_degree_level, extract_university_name, extract_program_name
 
 # ---------- テスト用JSONデータ ----------
 SAMPLE_JSON = [
