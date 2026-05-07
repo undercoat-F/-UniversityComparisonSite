@@ -1,0 +1,33 @@
+# 仮想環境
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+*.egg
+
+# 環境設定
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 出力・ログ
+log/
+db/csv_output/
+db/csv_output_snapshots/
+失敗時DBログ/
+results.json
+
+# OS
+.DS_Store
+Thumbs.db

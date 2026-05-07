@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>学位プログラム検索</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      background: #f4f6fa;
+      color: #222;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a3a5c;
+      color: #fff;
+      padding: 1.5rem 2rem;
+    }
+    header h1 { font-size: 1.6rem; }
+    header p  { font-size: 0.9rem; margin-top: 0.25rem; opacity: 0.8; }
+
+    main { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem; }
+
+    /* ---- 検索フォーム ---- */
+    .search-card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      padding: 1.5rem 2rem;
+      margin-bottom: 2rem;
+    }
+    .search-card h2 { font-size: 1.1rem; margin-bottom: 1rem; color: #1a3a5c; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0.85rem 1.2rem;
+    }
+    .form-group { display: flex; flex-direction: column; gap: 0.3rem; }
+    .form-group label { font-size: 0.8rem; font-weight: 600; color: #555; }
+    .form-group input,
+    .form-group select {
+      padding: 0.5rem 0.7rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      transition: border-color 0.2s;
+    }
+    .form-group input:focus,
+    .form-group select:focus { outline: none; border-color: #1a3a5c; }
+
+    .price-row { grid-column: 1 / -1; display: flex; gap: 1rem; align-items: flex-end; }
+    .price-row .form-group { flex: 1; }
+
+    .actions {
+      grid-column: 1 / -1;
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+    button {
+      padding: 0.55rem 1.4rem;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-primary { background: #1a3a5c; color: #fff; }
+    .btn-primary:hover { background: #26527a; }
+    .btn-secondary { background: #e2e8f0; color: #333; }
+    .btn-secondary:hover { background: #cbd5e1; }
+
+    /* ---- 結果 ---- */
+    #status { font-size: 0.9rem; color: #555; margin-bottom: 1rem; min-height: 1.2em; }
+
+    .results-table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    thead { background: #1a3a5c; color: #fff; }
+    th, td { padding: 0.75rem 1rem; text-align: left; font-size: 0.9rem; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    tbody tr:hover { background: #eef2f7; }
+
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 99px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-online  { background: #d1fae5; color: #065f46; }
+    .badge-offline { background: #e0e7ff; color: #3730a3; }
+
+    /* ---- ページング ---- */
+    .pagination {
+      display: flex;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+    }
+    .pagination button { padding: 0.4rem 0.9rem; font-size: 0.85rem; }
+    .pagination button:disabled { opacity: 0.4; cursor: default; }
+
+    #no-results {
+      text-align: center;
+      padding: 3rem;
+      color: #888;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>学位プログラム検索</h1>
+  <p>大学院・学士プログラムの学費を比較できます</p>
+</header>
+
+<main>
+  <div class="search-card">
+    <h2>絞り込み検索</h2>
+    <div class="form-grid">
+
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label for="keyword">キーワード（プログラム名・学位名など）</label>
+        <input type="text" id="keyword" placeholder="例: Computer Science, MBA ..." />
+      </div>
+
+      <div class="form-group">
+        <label for="country">国</label>
+        <select id="country">
+          <option value="">すべて</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="degree">学位レベル</label>
+        <select id="degree">
+          <option value="">すべて</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="category">コースタイプ</label>
+        <input type="text" id="category" placeholder="例: Full-time, Part-time" />
+      </div>
+
+      <div class="form-group">
+        <label for="is_online">受講形式</label>
+        <select id="is_online">
+          <option value="">すべて</option>
+          <option value="true">オンライン</option>
+          <option value="false">オフライン</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="currency">通貨</label>
+        <select id="currency">
+          <option value="">すべて</option>
+        </select>
+      </div>
+
+      <div class="price-row">
+        <div class="form-group">
+          <label for="price_min">学費（最小）</label>
+          <input type="number" id="price_min" placeholder="例: 5000" min="0" />
+        </div>
+        <div class="form-group">
+          <label for="price_max">学費（最大）</label>
+          <input type="number" id="price_max" placeholder="例: 30000" min="0" />
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn-primary" onclick="doSearch()">検索</button>
+        <button class="btn-secondary" onclick="resetForm()">リセット</button>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="no-results">
+    <p>条件に一致するプログラムが見つかりませんでした。</p>
+  </div>
+
+  <div class="results-table-wrap">
+    <table id="results-table" style="display:none;">
+      <thead>
+        <tr>
+          <th>プログラム名</th>
+          <th>大学</th>
+          <th>国</th>
+          <th>学位</th>
+          <th>コースタイプ</th>
+          <th>学費</th>
+          <th>通貨</th>
+          <th>形式</th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+
+  <div class="pagination">
+    <button id="btn-prev" onclick="changePage(-1)" disabled>◀ 前へ</button>
+    <span id="page-info" style="line-height:2;font-size:0.9rem;"></span>
+    <button id="btn-next" onclick="changePage(1)" disabled>次へ ▶</button>
+  </div>
+
+</main>
+
+<script>
+  const API_BASE = "http://localhost:8000";
+  const PAGE_SIZE = 20;
+  let currentOffset = 0;
+  let currentTotal = null;
+
+  // ---- 初期化: ドロップダウンをAPIから取得 ----
+  async function loadDropdowns() {
+    try {
+      const [countries, degrees, currencies] = await Promise.all([
+        fetch(`${API_BASE}/countries`).then(r => r.json()),
+        fetch(`${API_BASE}/degree-levels`).then(r => r.json()),
+        fetch(`${API_BASE}/currencies`).then(r => r.json()),
+      ]);
+
+      const countryEl = document.getElementById("country");
+      countries.forEach(c => {
+        const opt = document.createElement("option");
+        opt.value = c; opt.textContent = c;
+        countryEl.appendChild(opt);
+      });
+
+      const degreeEl = document.getElementById("degree");
+      degrees.forEach(d => {
+        const opt = document.createElement("option");
+        opt.value = d; opt.textContent = d;
+        degreeEl.appendChild(opt);
+      });
+
+      const currencyEl = document.getElementById("currency");
+      currencies.forEach(cur => {
+        const opt = document.createElement("option");
+        opt.value = cur; opt.textContent = cur;
+        currencyEl.appendChild(opt);
+      });
+    } catch (e) {
+      setStatus("⚠️ APIサーバーに接続できませんでした。サーバーが起動しているか確認してください。");
+    }
+  }
+
+  // ---- 検索実行 ----
+  async function doSearch(offset = 0) {
+    currentOffset = offset;
+
+    const params = new URLSearchParams();
+    const keyword  = document.getElementById("keyword").value.trim();
+    const country  = document.getElementById("country").value;
+    const degree   = document.getElementById("degree").value;
+    const category = document.getElementById("category").value.trim();
+    const is_online = document.getElementById("is_online").value;
+    const currency = document.getElementById("currency").value;
+    const price_min = document.getElementById("price_min").value;
+    const price_max = document.getElementById("price_max").value;
+
+    if (keyword)   params.set("keyword", keyword);
+    if (country)   params.set("country", country);
+    if (degree)    params.set("degree", degree);
+    if (category)  params.set("category", category);
+    if (is_online) params.set("is_online", is_online);
+    if (currency)  params.set("currency", currency);
+    if (price_min) params.set("price_min", price_min);
+    if (price_max) params.set("price_max", price_max);
+    params.set("limit", PAGE_SIZE);
+    params.set("offset", offset);
+
+    setStatus("検索中...");
+
+    try {
+      const res = await fetch(`${API_BASE}/search?${params}`);
+      if (!res.ok) {
+        const err = await res.json();
+        setStatus(`エラー: ${err.detail}`);
+        return;
+      }
+      const data = await res.json();
+      renderResults(data, offset);
+    } catch (e) {
+      setStatus("⚠️ APIサーバーに接続できませんでした。");
+    }
+  }
+
+  // ---- 結果レンダリング ----
+  function renderResults(data, offset) {
+    const tbody = document.getElementById("results-body");
+    const table = document.getElementById("results-table");
+    const noResults = document.getElementById("no-results");
+
+    tbody.innerHTML = "";
+
+    if (data.length === 0 && offset === 0) {
+      table.style.display = "none";
+      noResults.style.display = "block";
+      setStatus("");
+      updatePagination(0);
+      return;
+    }
+
+    noResults.style.display = "none";
+    table.style.display = "table";
+
+    data.forEach(row => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${esc(row.program_name)}</td>
+        <td>${esc(row.university_name)}</td>
+        <td>${esc(row.country)}</td>
+        <td>${esc(row.degree_level)}</td>
+        <td>${esc(row.course_type)}</td>
+        <td>${row.amount != null ? row.amount.toLocaleString() : "—"}</td>
+        <td>${esc(row.currency)}</td>
+        <td>${onlineBadge(row.is_online)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    const page = Math.floor(offset / PAGE_SIZE) + 1;
+    const hasMore = data.length === PAGE_SIZE;
+    setStatus(`${offset + 1}〜${offset + data.length} 件を表示`);
+    updatePagination(page, hasMore);
+  }
+
+  function onlineBadge(val) {
+    if (val === true)  return '<span class="badge badge-online">オンライン</span>';
+    if (val === false) return '<span class="badge badge-offline">対面</span>';
+    return "—";
+  }
+
+  function esc(v) {
+    if (v == null) return "—";
+    return String(v)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // ---- ページング ----
+  function changePage(dir) {
+    const next = currentOffset + dir * PAGE_SIZE;
+    if (next < 0) return;
+    doSearch(next);
+  }
+
+  function updatePagination(page, hasMore) {
+    document.getElementById("btn-prev").disabled = (currentOffset === 0);
+    document.getElementById("btn-next").disabled = !hasMore;
+    document.getElementById("page-info").textContent = page > 0 ? `${page} ページ` : "";
+  }
+
+  // ---- フォームリセット ----
+  function resetForm() {
+    ["keyword","category","price_min","price_max"].forEach(id => {
+      document.getElementById(id).value = "";
+    });
+    ["country","degree","is_online","currency"].forEach(id => {
+      document.getElementById(id).selectedIndex = 0;
+    });
+    document.getElementById("results-body").innerHTML = "";
+    document.getElementById("results-table").style.display = "none";
+    document.getElementById("no-results").style.display = "none";
+    setStatus("");
+    updatePagination(0, false);
+  }
+
+  function setStatus(msg) {
+    document.getElementById("status").textContent = msg;
+  }
+
+  // Enterキーで検索
+  document.addEventListener("keydown", e => {
+    if (e.key === "Enter") doSearch();
+  });
+
+  // 起動
+  loadDropdowns();
+</script>
+
+</body>
+</html>
