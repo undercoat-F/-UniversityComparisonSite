@@ -68,13 +68,13 @@ def normalize_degree_level(raw_degree_name):
     if "phd" in name_lower or "doctorate" in name_lower or "博士" in name_lower:
         return "PhD"
     
-    # Master 系
-    if "master" in name_lower or "postgraduate" in name_lower or "graduate" in name_lower or "msc" in name_lower or "ma" in name_lower or "meng" in name_lower or "修士" in name_lower:
-        return "Master"
-    
-    # Bachelor 系
-    if "bachelor" in name_lower or "undergraduate" in name_lower or "ba" in name_lower or "bsc" in name_lower or "beng" in name_lower or "学士" in name_lower:
+    # Bachelor 系（Master 判定より先にチェック："undergraduate" に "graduate" が含まれるため）
+    if any(k in name_lower for k in ["bachelor", "undergraduate", "bsc", "beng", "ba ", "学士"]):
         return "Bachelor"
+
+    # Master 系
+    if any(k in name_lower for k in ["master", "postgraduate", "graduate", "msc", "meng", "ma ", "修士"]):
+        return "Master"
     
     # 不明
     return "Other"
