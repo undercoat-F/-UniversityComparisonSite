@@ -11,9 +11,9 @@ from pathlib import Path
 from datetime import datetime
 
 # parent dirのdbモジュールをインポート
-sys.path.insert(0, str(Path(__file__).parent.parent / "db"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from jsontocsv import generate_csvs
+from db.jsontocsv import generate_csvs
 
 
 # ===== テスト用モック JSON =====

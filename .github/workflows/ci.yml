@@ -30,7 +30,7 @@ jobs:
       - name: Run stable test suite
         run: |
           pytest -q \
-            tests/test_jsontocsv_vibe.py \
+            tests/test_jsontocsv.py \
             tests/test_generate_csvs.py \
             tests/test_extract_page.py
 
@@ -43,5 +43,11 @@ jobs:
           fi
 
       - name: API import smoke test
+        env:
+          DB_HOST: localhost
+          DB_NAME: ci_dummy
+          DB_READUSER: ci_readonly
+          DB_READPASSWORD: ci_dummy_password
+          DB_PORT: "5432"
         run: |
           python -c "import search.searcher; print('searcher import ok')"
