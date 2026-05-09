@@ -362,6 +362,7 @@
     if (tuition_type) params.set("tuition_type", tuition_type);
     if (price_min) params.set("price_min", price_min);
     if (price_max) params.set("price_max", price_max);
+    params.set("with_total", "true");
     params.set("limit", PAGE_SIZE);
     params.set("offset", offset);
 
@@ -374,15 +375,17 @@
         setStatus(`Error: ${err.detail}`);
         return;
       }
-      const data = await res.json();
-      renderResults(data, offset);
+      const payload = await res.json();
+      const data = Array.isArray(payload) ? payload : (payload.items || []);
+      const total = Array.isArray(payload) ? null : payload.total;
+      renderResults(data, offset, total);
     } catch (e) {
       setStatus("⚠️ Could not connect to the API server.");
     }
   }
 
   // ---- Render Results ----
-  function renderResults(data, offset) {
+  function renderResults(data, offset, total) {
     const tbody = document.getElementById("results-body");
     const table = document.getElementById("results-table");
     const noResults = document.getElementById("no-results");
@@ -405,7 +408,7 @@
       tr.style.cursor = "pointer";
       tr.title = "Click to view details";
       tr.addEventListener("click", () => {
-        window.location.href = `detail.html?id=${row.id}`;
+        window.location.href = `/detail?id=${row.id}`;
       });
       tr.innerHTML = `
         <td>${esc(row.program_name)}</td>
@@ -423,7 +426,9 @@
 
     const page = Math.floor(offset / PAGE_SIZE) + 1;
     const hasMore = data.length === PAGE_SIZE;
-    setStatus(`Showing ${offset + 1}-${offset + data.length}`);
+    const rangeText = `Showing ${offset + 1}-${offset + data.length}`;
+    const totalText = (typeof total === "number") ? ` (${total.toLocaleString()} hits)` : "";
+    setStatus(`${rangeText}${totalText}`);
     updatePagination(page, hasMore);
   }
 

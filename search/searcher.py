@@ -120,6 +120,7 @@ def search_programs(
     price_min: Optional[int] = Query(None, ge=0),
     price_max: Optional[int] = Query(None, ge=0),
     currency: Optional[str] = None,
+    with_total: bool = Query(False),
     sort_by: str = Query("last_seen", pattern="^(last_seen|amount|normalized_monthly_amount)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     limit: int = Query(20, ge=1, le=100),
@@ -208,6 +209,10 @@ def search_programs(
         "amount": "tp.amount",
         "normalized_monthly_amount": "tp.normalized_monthly_amount",
     }
+
+    count_params = tuple(params)
+    count_query = f"SELECT COUNT(DISTINCT id) FROM ({query}) AS filtered"
+
     order_col = sort_columns.get(sort_by, "dp.last_seen")
     order_dir = "ASC" if sort_order == "asc" else "DESC"
     query += f" ORDER BY {order_col} {order_dir} NULLS LAST LIMIT %s OFFSET %s"
@@ -216,10 +221,15 @@ def search_programs(
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            total_count = None
+            if with_total:
+                cur.execute(count_query, count_params)
+                total_count = cur.fetchone()[0]
+
             cur.execute(query, tuple(params))
             results = cur.fetchall()
 
-            return [
+            items = [
                 {
                     "id": row[0],
                     "program_name": row[1],
@@ -238,6 +248,14 @@ def search_programs(
                 }
                 for row in results
             ]
+
+            if with_total:
+                return {
+                    "items": items,
+                    "total": total_count,
+                }
+
+            return items
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SQL execution failed: {str(e)}")
     finally:
