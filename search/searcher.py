@@ -8,12 +8,14 @@
 #DBの権限はPostgreSQLのロールで決定されるため、DB_configに注意
 
 import os
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 from dotenv import load_dotenv
-from urllib.parse import urlparse
 
 load_dotenv()
 
@@ -60,6 +62,12 @@ DB_CONFIG = get_db_config()
 
 app = FastAPI(title="学位検索API", version="1.0.0")
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+WEBPAGE_DIR = BASE_DIR / "webpage"
+
+if WEBPAGE_DIR.exists():
+    app.mount("/webpage", StaticFiles(directory=str(WEBPAGE_DIR)), name="webpage")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -70,6 +78,20 @@ app.add_middleware(
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.get("/")
+def root_page():
+    if not WEBPAGE_DIR.exists():
+        raise HTTPException(status_code=404, detail="webpage directory not found")
+    return FileResponse(str(WEBPAGE_DIR / "index.html"))
+
+
+@app.get("/detail")
+def detail_page():
+    if not WEBPAGE_DIR.exists():
+        raise HTTPException(status_code=404, detail="webpage directory not found")
+    return FileResponse(str(WEBPAGE_DIR / "detail.html"))
 
 
 def get_connection():
