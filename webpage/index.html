@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>学位プログラム検索</title>
+  <title>Degree Program Search</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -18,13 +18,35 @@
       background: #1a3a5c;
       color: #fff;
       padding: 1.5rem 2rem;
+      overflow: hidden;
     }
     header h1 { font-size: 1.6rem; }
     header p  { font-size: 0.9rem; margin-top: 0.25rem; opacity: 0.8; }
 
+    .ascii-wrap {
+      margin-top: 0.8rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.3);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 0.45rem 0;
+      min-height: 2.2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    #ascii-art {
+      position: relative;
+      display: inline-block;
+      white-space: pre;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.8rem;
+      line-height: 1;
+      letter-spacing: 0.02em;
+      opacity: 0.95;
+      will-change: transform;
+    }
+
     main { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem; }
 
-    /* ---- 検索フォーム ---- */
+    /* ---- Search Form ---- */
     .search-card {
       background: #fff;
       border-radius: 10px;
@@ -51,6 +73,13 @@
     }
     .form-group input:focus,
     .form-group select:focus { outline: none; border-color: #1a3a5c; }
+
+    #keyword {
+      min-height: 3.8rem;
+      font-size: 1rem;
+      padding-top: 1rem;
+      padding-bottom: 1rem;
+    }
 
     .price-row { grid-column: 1 / -1; display: flex; gap: 1rem; align-items: flex-end; }
     .price-row .form-group { flex: 1; }
@@ -89,7 +118,7 @@
     thead { background: #1a3a5c; color: #fff; }
     th, td { padding: 0.75rem 1rem; text-align: left; font-size: 0.9rem; white-space: nowrap; }
     tbody tr:nth-child(even) { background: #f8fafc; }
-    tbody tr:hover { background: #eef2f7; }
+    tbody tr:hover { background: #eef2f7; cursor: pointer; }
 
     .badge {
       display: inline-block;
@@ -101,7 +130,7 @@
     .badge-online  { background: #d1fae5; color: #065f46; }
     .badge-offline { background: #e0e7ff; color: #3730a3; }
 
-    /* ---- ページング ---- */
+    /* ---- Pagination ---- */
     .pagination {
       display: flex;
       justify-content: center;
@@ -122,69 +151,79 @@
 <body>
 
 <header>
-  <h1>学位プログラム検索</h1>
-  <p>大学院・学士プログラムの学費を比較できます</p>
+  <h1>Degree Program Search</h1>
+  <p>Compare tuition fees for undergraduate and postgraduate programs</p>
+  <div class="ascii-wrap">
+    <pre id="ascii-art"></pre>
+  </div>
 </header>
 
 <main>
   <div class="search-card">
-    <h2>絞り込み検索</h2>
+    <h2>Filter Search</h2>
     <div class="form-grid">
 
       <div class="form-group" style="grid-column: 1 / -1;">
-        <label for="keyword">キーワード（プログラム名・学位名など）</label>
-        <input type="text" id="keyword" placeholder="例: Computer Science, MBA ..." />
+        <label for="keyword">Keyword (program name, degree level, etc.)</label>
+        <input type="text" id="keyword" placeholder="e.g. Computer Science, MBA ..." />
       </div>
 
       <div class="form-group">
-        <label for="country">国</label>
+        <label for="country">Country</label>
         <select id="country">
-          <option value="">すべて</option>
+          <option value="">All</option>
         </select>
       </div>
 
       <div class="form-group">
-        <label for="degree">学位レベル</label>
+        <label for="degree">Degree Level</label>
         <select id="degree">
-          <option value="">すべて</option>
+          <option value="">All</option>
         </select>
       </div>
 
       <div class="form-group">
-        <label for="category">コースタイプ</label>
-        <input type="text" id="category" placeholder="例: Full-time, Part-time" />
+        <label for="category">Course Type</label>
+        <input type="text" id="category" placeholder="e.g. Full-time, Part-time" />
       </div>
 
       <div class="form-group">
-        <label for="is_online">受講形式</label>
+        <label for="is_online">Study Mode</label>
         <select id="is_online">
-          <option value="">すべて</option>
-          <option value="true">オンライン</option>
-          <option value="false">オフライン</option>
+          <option value="">All</option>
+          <option value="true">Online</option>
+          <option value="false">On-campus</option>
         </select>
       </div>
 
       <div class="form-group">
-        <label for="currency">通貨</label>
+        <label for="currency">Currency</label>
         <select id="currency">
-          <option value="">すべて</option>
+          <option value="">All</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="tuition_type">Tuition Type</label>
+        <select id="tuition_type">
+          <option value="">All</option>
         </select>
       </div>
 
       <div class="price-row">
         <div class="form-group">
-          <label for="price_min">学費（最小）</label>
-          <input type="number" id="price_min" placeholder="例: 5000" min="0" />
+          <label for="price_min">Tuition (Min)</label>
+          <input type="number" id="price_min" placeholder="e.g. 5000" min="0" />
         </div>
         <div class="form-group">
-          <label for="price_max">学費（最大）</label>
-          <input type="number" id="price_max" placeholder="例: 30000" min="0" />
+          <label for="price_max">Tuition (Max)</label>
+          <input type="number" id="price_max" placeholder="e.g. 30000" min="0" />
         </div>
       </div>
 
       <div class="actions">
-        <button class="btn-primary" onclick="doSearch()">検索</button>
-        <button class="btn-secondary" onclick="resetForm()">リセット</button>
+        <button class="btn-primary" onclick="doSearch()">Search</button>
+        <button class="btn-secondary" onclick="resetForm()">Reset</button>
       </div>
 
     </div>
@@ -193,21 +232,22 @@
   <div id="status"></div>
 
   <div id="no-results">
-    <p>条件に一致するプログラムが見つかりませんでした。</p>
+    <p>No programs matched your filters.</p>
   </div>
 
   <div class="results-table-wrap">
     <table id="results-table" style="display:none;">
       <thead>
         <tr>
-          <th>プログラム名</th>
-          <th>大学</th>
-          <th>国</th>
-          <th>学位</th>
-          <th>コースタイプ</th>
-          <th>学費</th>
-          <th>通貨</th>
-          <th>形式</th>
+          <th>Program</th>
+          <th>University</th>
+          <th>Country</th>
+          <th>Degree</th>
+          <th>Course Type</th>
+          <th>Tuition</th>
+          <th>Currency</th>
+          <th>Tuition Type</th>
+          <th>Mode</th>
         </tr>
       </thead>
       <tbody id="results-body"></tbody>
@@ -215,26 +255,55 @@
   </div>
 
   <div class="pagination">
-    <button id="btn-prev" onclick="changePage(-1)" disabled>◀ 前へ</button>
+    <button id="btn-prev" onclick="changePage(-1)" disabled>◀ Prev</button>
     <span id="page-info" style="line-height:2;font-size:0.9rem;"></span>
-    <button id="btn-next" onclick="changePage(1)" disabled>次へ ▶</button>
+    <button id="btn-next" onclick="changePage(1)" disabled>Next ▶</button>
   </div>
 
 </main>
 
 <script>
-  const API_BASE = "http://localhost:8000";
+  const API_BASE = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? "http://localhost:8000"
+    : "";
   const PAGE_SIZE = 20;
   let currentOffset = 0;
   let currentTotal = null;
 
-  // ---- 初期化: ドロップダウンをAPIから取得 ----
+  const asciiArt = ` 
+
+   //\\\\   ^   ^   //\\\\      ╭---------------------------╮       ______________     ____________
+  //**\\\\(  O W O)//**\\\\     | Your next chapter start.  |       |\\\\   ||  // |    |* *|====== |
+ //*****<(     )>*****\\\\    | keep exploring. we can do.|       | \\\\  || //  |    | * |====== |
+//******  u u   *******\\\\   ╰---------------------------╯       |==== ++ ====|    |* *|====== |
+                                                                |  // || \\\\  |    |===|====== |      ^   ^
+                                                                |_//__||__\\\\_|    |========== |     ( O W O)
+                                                                ______|_________________|_________ C(     )
+`;
+
+  const asciiArtElement = document.getElementById("ascii-art");
+  asciiArtElement.textContent = asciiArt;
+
+  let scrollPosition = 0;
+  const scrollSpeed = 16;
+
+  function scrollAsciiArt() {
+    scrollPosition += 2;
+    if (scrollPosition > window.innerWidth) {
+      scrollPosition = -asciiArtElement.offsetWidth;
+    }
+    asciiArtElement.style.transform = `translateX(${scrollPosition}px)`;
+    setTimeout(scrollAsciiArt, scrollSpeed);
+  }
+
+  // ---- Initialize: fetch dropdown options from API ----
   async function loadDropdowns() {
     try {
-      const [countries, degrees, currencies] = await Promise.all([
+      const [countries, degrees, currencies, tuitionTypes] = await Promise.all([
         fetch(`${API_BASE}/countries`).then(r => r.json()),
         fetch(`${API_BASE}/degree-levels`).then(r => r.json()),
         fetch(`${API_BASE}/currencies`).then(r => r.json()),
+        fetch(`${API_BASE}/tuition-types`).then(r => r.json()),
       ]);
 
       const countryEl = document.getElementById("country");
@@ -257,12 +326,19 @@
         opt.value = cur; opt.textContent = cur;
         currencyEl.appendChild(opt);
       });
+
+      const tuitionTypeEl = document.getElementById("tuition_type");
+      tuitionTypes.forEach(t => {
+        const opt = document.createElement("option");
+        opt.value = t; opt.textContent = t;
+        tuitionTypeEl.appendChild(opt);
+      });
     } catch (e) {
-      setStatus("⚠️ APIサーバーに接続できませんでした。サーバーが起動しているか確認してください。");
+      setStatus("⚠️ Could not connect to the API server. Please ensure it is running.");
     }
   }
 
-  // ---- 検索実行 ----
+  // ---- Run Search ----
   async function doSearch(offset = 0) {
     currentOffset = offset;
 
@@ -273,6 +349,7 @@
     const category = document.getElementById("category").value.trim();
     const is_online = document.getElementById("is_online").value;
     const currency = document.getElementById("currency").value;
+    const tuition_type = document.getElementById("tuition_type").value;
     const price_min = document.getElementById("price_min").value;
     const price_max = document.getElementById("price_max").value;
 
@@ -282,28 +359,29 @@
     if (category)  params.set("category", category);
     if (is_online) params.set("is_online", is_online);
     if (currency)  params.set("currency", currency);
+    if (tuition_type) params.set("tuition_type", tuition_type);
     if (price_min) params.set("price_min", price_min);
     if (price_max) params.set("price_max", price_max);
     params.set("limit", PAGE_SIZE);
     params.set("offset", offset);
 
-    setStatus("検索中...");
+    setStatus("Searching...");
 
     try {
       const res = await fetch(`${API_BASE}/search?${params}`);
       if (!res.ok) {
         const err = await res.json();
-        setStatus(`エラー: ${err.detail}`);
+        setStatus(`Error: ${err.detail}`);
         return;
       }
       const data = await res.json();
       renderResults(data, offset);
     } catch (e) {
-      setStatus("⚠️ APIサーバーに接続できませんでした。");
+      setStatus("⚠️ Could not connect to the API server.");
     }
   }
 
-  // ---- 結果レンダリング ----
+  // ---- Render Results ----
   function renderResults(data, offset) {
     const tbody = document.getElementById("results-body");
     const table = document.getElementById("results-table");
@@ -324,6 +402,11 @@
 
     data.forEach(row => {
       const tr = document.createElement("tr");
+      tr.style.cursor = "pointer";
+      tr.title = "Click to view details";
+      tr.addEventListener("click", () => {
+        window.location.href = `detail.html?id=${row.id}`;
+      });
       tr.innerHTML = `
         <td>${esc(row.program_name)}</td>
         <td>${esc(row.university_name)}</td>
@@ -332,6 +415,7 @@
         <td>${esc(row.course_type)}</td>
         <td>${row.amount != null ? row.amount.toLocaleString() : "—"}</td>
         <td>${esc(row.currency)}</td>
+        <td>${esc(row.tuition_type)}</td>
         <td>${onlineBadge(row.is_online)}</td>
       `;
       tbody.appendChild(tr);
@@ -339,13 +423,13 @@
 
     const page = Math.floor(offset / PAGE_SIZE) + 1;
     const hasMore = data.length === PAGE_SIZE;
-    setStatus(`${offset + 1}〜${offset + data.length} 件を表示`);
+    setStatus(`Showing ${offset + 1}-${offset + data.length}`);
     updatePagination(page, hasMore);
   }
 
   function onlineBadge(val) {
-    if (val === true)  return '<span class="badge badge-online">オンライン</span>';
-    if (val === false) return '<span class="badge badge-offline">対面</span>';
+    if (val === true)  return '<span class="badge badge-online">Online</span>';
+    if (val === false) return '<span class="badge badge-offline">On-campus</span>';
     return "—";
   }
 
@@ -358,7 +442,7 @@
       .replace(/"/g, "&quot;");
   }
 
-  // ---- ページング ----
+  // ---- Pagination ----
   function changePage(dir) {
     const next = currentOffset + dir * PAGE_SIZE;
     if (next < 0) return;
@@ -368,15 +452,15 @@
   function updatePagination(page, hasMore) {
     document.getElementById("btn-prev").disabled = (currentOffset === 0);
     document.getElementById("btn-next").disabled = !hasMore;
-    document.getElementById("page-info").textContent = page > 0 ? `${page} ページ` : "";
+    document.getElementById("page-info").textContent = page > 0 ? `Page ${page}` : "";
   }
 
-  // ---- フォームリセット ----
+  // ---- Reset Form ----
   function resetForm() {
     ["keyword","category","price_min","price_max"].forEach(id => {
       document.getElementById(id).value = "";
     });
-    ["country","degree","is_online","currency"].forEach(id => {
+    ["country","degree","is_online","currency","tuition_type"].forEach(id => {
       document.getElementById(id).selectedIndex = 0;
     });
     document.getElementById("results-body").innerHTML = "";
@@ -390,12 +474,17 @@
     document.getElementById("status").textContent = msg;
   }
 
-  // Enterキーで検索
+  // Search on Enter key
   document.addEventListener("keydown", e => {
     if (e.key === "Enter") doSearch();
   });
 
-  // 起動
+  // Boot
+  window.addEventListener("load", () => {
+    scrollPosition = -asciiArtElement.offsetWidth;
+    scrollAsciiArt();
+  });
+
   loadDropdowns();
 </script>
 

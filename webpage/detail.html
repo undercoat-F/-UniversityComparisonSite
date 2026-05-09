@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Program Detail</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      background: #f4f6fa;
+      color: #222;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a3a5c;
+      color: #fff;
+      padding: 1.2rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header a {
+      color: #fff;
+      text-decoration: none;
+      font-size: 0.9rem;
+      opacity: 0.8;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    header a:hover { opacity: 1; }
+    header h1 { font-size: 1.3rem; }
+
+    main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+
+    /* ---- Overview card ---- */
+    .overview-card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      padding: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .university-name {
+      font-size: 0.95rem;
+      color: #555;
+      margin-bottom: 0.3rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .country-badge {
+      background: #e0e7ff;
+      color: #3730a3;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.15rem 0.55rem;
+      border-radius: 99px;
+    }
+
+    .program-title {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #1a3a5c;
+      margin-bottom: 1.2rem;
+      line-height: 1.3;
+    }
+
+    .meta-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .meta-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.9rem;
+    }
+    .meta-label {
+      font-weight: 600;
+      color: #555;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 99px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .badge-online  { background: #d1fae5; color: #065f46; }
+    .badge-offline { background: #e0e7ff; color: #3730a3; }
+
+    .source-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      color: #1a3a5c;
+      font-size: 0.88rem;
+      text-decoration: none;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 0.4rem 0.85rem;
+      transition: background 0.15s;
+    }
+    .source-link:hover { background: #eef2f7; }
+
+    .last-seen {
+      font-size: 0.8rem;
+      color: #aaa;
+      margin-top: 1rem;
+    }
+
+    /* ---- Tuition table ---- */
+    .section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #1a3a5c;
+      margin-bottom: 0.75rem;
+    }
+
+    .tuition-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    thead { background: #1a3a5c; color: #fff; }
+    th, td {
+      padding: 0.7rem 1rem;
+      text-align: left;
+      font-size: 0.88rem;
+      white-space: nowrap;
+    }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    tbody tr:hover { background: #eef2f7; }
+
+    #no-tuition {
+      text-align: center;
+      padding: 2rem;
+      color: #888;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    /* ---- Loading / Error ---- */
+    #loading {
+      text-align: center;
+      padding: 4rem;
+      color: #888;
+    }
+    #error-msg {
+      background: #fee2e2;
+      color: #991b1b;
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+      margin-bottom: 1rem;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="index.html">&#8592; Back to Search</a>
+  <h1>Program Detail</h1>
+</header>
+
+<main>
+  <div id="error-msg"></div>
+  <div id="loading">Loading...</div>
+
+  <div id="content" style="display:none;">
+
+    <div class="overview-card">
+      <div class="university-name">
+        <span id="university-name"></span>
+        <span id="country-badge" class="country-badge"></span>
+      </div>
+      <div class="program-title" id="program-title"></div>
+
+      <div class="meta-grid">
+        <div class="meta-item">
+          <span class="meta-label">Course Type:</span>
+          <span id="course-type"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Study Mode:</span>
+          <span id="is-online"></span>
+        </div>
+      </div>
+
+      <a id="source-link" class="source-link" href="#" target="_blank" rel="noopener noreferrer" style="display:none;">
+        &#128279; Official Program Page
+      </a>
+
+      <div class="last-seen" id="last-seen"></div>
+    </div>
+
+    <div class="section-title">Tuition Records</div>
+    <div id="no-tuition">No tuition information available.</div>
+    <div class="tuition-wrap">
+      <table id="tuition-table" style="display:none;">
+        <thead>
+          <tr>
+            <th>Degree Level</th>
+            <th>Tuition Type</th>
+            <th>Amount</th>
+            <th>Currency</th>
+            <th>Monthly (normalized)</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody id="tuition-body"></tbody>
+      </table>
+    </div>
+
+  </div>
+</main>
+
+<script>
+  const API_BASE = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? "http://localhost:8000"
+    : "";
+
+  function esc(v) {
+    if (v == null) return "—";
+    return String(v)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function onlineBadge(val) {
+    if (val === true)  return '<span class="badge badge-online">Online</span>';
+    if (val === false) return '<span class="badge badge-offline">On-campus</span>';
+    return "—";
+  }
+
+  async function loadProgram() {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("id");
+
+    if (!id) {
+      showError("No program ID specified.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/program/${id}`);
+      if (!res.ok) {
+        const err = await res.json();
+        showError(err.detail || "Failed to load program.");
+        return;
+      }
+      const data = await res.json();
+      render(data);
+    } catch (e) {
+      showError("Could not connect to the API server. Please ensure it is running.");
+    }
+  }
+
+  function render(data) {
+    document.title = `${data.program_name} — ${data.university_name}`;
+
+    document.getElementById("university-name").textContent = data.university_name;
+    document.getElementById("country-badge").textContent = data.country || "";
+    document.getElementById("program-title").textContent = data.program_name;
+    document.getElementById("course-type").textContent = data.course_type || "—";
+    document.getElementById("is-online").innerHTML = onlineBadge(data.is_online);
+
+    if (data.source_url) {
+      const link = document.getElementById("source-link");
+      link.href = data.source_url;
+      link.style.display = "inline-flex";
+    }
+
+    if (data.last_seen) {
+      document.getElementById("last-seen").textContent =
+        `Last confirmed: ${data.last_seen.slice(0, 10)}`;
+    }
+
+    const tbody = document.getElementById("tuition-body");
+    const table = document.getElementById("tuition-table");
+    const noTuition = document.getElementById("no-tuition");
+
+    if (!data.tuition_records || data.tuition_records.length === 0) {
+      noTuition.style.display = "block";
+    } else {
+      table.style.display = "table";
+      data.tuition_records.forEach(r => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${esc(r.degree_level)}</td>
+          <td>${esc(r.tuition_type)}</td>
+          <td>${r.amount != null ? r.amount.toLocaleString() : "—"}</td>
+          <td>${esc(r.currency)}</td>
+          <td>${r.normalized_monthly_amount != null ? r.normalized_monthly_amount.toLocaleString(undefined, {maximumFractionDigits: 0}) : "—"}</td>
+          <td>${esc(r.normalization_note)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("content").style.display = "block";
+  }
+
+  function showError(msg) {
+    document.getElementById("loading").style.display = "none";
+    const el = document.getElementById("error-msg");
+    el.textContent = msg;
+    el.style.display = "block";
+  }
+
+  loadProgram();
+</script>
+
+</body>
+</html>

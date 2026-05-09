@@ -7,47 +7,33 @@ on:
       - main
 
 jobs:
-  deploy-render:
-    name: Deploy to Render
+  deploy-railway:
+    name: Deploy to Railway
     runs-on: ubuntu-latest
-    if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+    if: ${{ secrets.RAILWAY_TOKEN != '' }}
 
     steps:
-      - name: Trigger Render deploy hook
-        run: |
-          curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  deploy-vps:
-    name: Deploy to VPS
-    runs-on: ubuntu-latest
-    if: ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_SSH_KEY != '' }}
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
 
-    steps:
-      - name: Deploy by SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            cd "${{ secrets.VPS_APP_DIR }}"
-            git pull origin main
-            docker compose up -d --build
+      - name: Deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service ${{ secrets.RAILWAY_SERVICE_NAME }} --detach
 
   verify:
     name: Post-deploy health check
     runs-on: ubuntu-latest
-    needs:
-      - deploy-render
-      - deploy-vps
-    if: ${{ always() }}
+    needs: deploy-railway
+    if: ${{ always() && secrets.HEALTHCHECK_URL != '' }}
 
     steps:
+      - name: Wait for deploy to complete
+        run: sleep 30
+
       - name: Check API health endpoint
-        if: ${{ secrets.HEALTHCHECK_URL != '' }}
         run: |
           curl -fsS "${{ secrets.HEALTHCHECK_URL }}"
-
-      - name: Skip health check if not configured
-        if: ${{ secrets.HEALTHCHECK_URL == '' }}
-        run: echo "HEALTHCHECK_URL is not set; skipped."

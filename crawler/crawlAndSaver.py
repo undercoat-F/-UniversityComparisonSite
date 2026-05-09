@@ -393,6 +393,8 @@ def is_url_in_scope(full_url, target_url):
 
 def should_exclude_course_page(url, title):
     text = f"{title} {urlparse(url).path}".lower()
+    title_lower = (title or "").strip().lower()
+    query = urlparse(url).query.lower()
     exclude_markers = [
         "scholarship",
         "bursar",
@@ -423,6 +425,20 @@ def should_exclude_course_page(url, title):
         "taster-courses",
         "benefits",
     ]
+
+    list_page_titles = {
+        "undergraduate programmes | degree finder | the university of edinburgh",
+        "postgraduate taught programmes | degree finder | the university of edinburgh",
+        "postgraduate research programmes | degree finder | the university of edinburgh",
+        "undergraduate courses | university of london",
+        "postgraduate courses | university of london",
+        "research degrees | university of london",
+    }
+
+    if "page=" in query:
+        return True
+    if title_lower in list_page_titles:
+        return True
     return any(marker in text for marker in exclude_markers)
 
 def extract_urls(soup, base_url, target_url):
@@ -801,7 +817,12 @@ def detect_range_values(line):
 
 def extract_info(text, title=""):
     degree_keywords = ["bachelor", "master", "phd", "doctorate", "undergraduate", "graduate", "degree", "学士", "修士", "博士", "学位"]
-    fee_keywords = ["tuition", "fee", "fees", "cost", "scholarship", "funding", "授業料", "費用"]
+    fee_keywords = [
+        "tuition", "fee", "fees", "cost", "costs", "price", "prices", "funding",
+        "international fee", "home fee", "uk fee", "overseas fee", "annual fee",
+        "per year", "per semester", "per month", "full programme", "full program",
+        "授業料", "費用", "学費",
+    ]
     
     #degree_keywords = ["bachelor", "master", "phd", "doctorate", "undergraduate" "degree", "学士", "修士", "博士", "学位"]
     
@@ -834,7 +855,13 @@ def extract_info(text, title=""):
             normalized_monthly_amount = round(price / divisor_month, 2)
 
         # 金額がある行でも学費文脈が薄いものは除外してノイズを減らす
-        if price is not None and not any(k in line_lower for k in fee_keywords):
+        # ただし現在行だけでは取りこぼしが多いため、近傍行も確認する。
+        left = max(0, idx - 2)
+        right = min(len(lines), idx + 3)
+        fee_context_text = " ".join(lines[left:right]).lower()
+        has_fee_context = any(k in fee_context_text for k in fee_keywords)
+        has_currency_marker = re.search(r"\b(usd|eur|gbp|jpy|aud|cad)\b|[\$£€¥円]", fee_context_text) is not None
+        if price is not None and not has_fee_context and not has_currency_marker:
             extraction_drop_stats["dropped_fee_context"] += 1
             continue
 

@@ -13,21 +13,50 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 load_dotenv()
 
-_REQUIRED_ENV = ["DB_HOST", "DB_NAME", "DB_READUSER", "DB_READPASSWORD", "DB_PORT"]
-_missing = [k for k in _REQUIRED_ENV if not os.getenv(k)]
-if _missing:
-    raise EnvironmentError(f".envに必要な環境変数が設定されていません: {_missing}")
+# 親DB（本番）の接続情報を優先。なければ開発DB使用
+def get_db_config():
+    """
+    本番環境では PARENT_DB_HOST/USER/PASSWORD を使用
+    開発環境では DB_HOST/READUSER/PASSWORD を使用
+    """
+    parent_host = os.getenv("PARENT_DB_HOST")
+    
+    if parent_host:
+        # 本番環境（親DB）
+        _REQUIRED_ENV = ["PARENT_DB_HOST", "PARENT_DB_NAME", "PARENT_DB_USER", "PARENT_DB_PASSWORD", "PARENT_DB_PORT"]
+        _missing = [k for k in _REQUIRED_ENV if not os.getenv(k)]
+        if _missing:
+            raise EnvironmentError(f".envに必要な環境変数が設定されていません: {_missing}")
+        
+        return {
+            "host": os.getenv("PARENT_DB_HOST"),
+            "dbname": os.getenv("PARENT_DB_NAME"),
+            "user": os.getenv("PARENT_DB_USER"),
+            "password": os.getenv("PARENT_DB_PASSWORD"),
+            "port": int(os.getenv("PARENT_DB_PORT")),
+            "sslmode": os.getenv("DB_SSLMODE", "require"),
+        }
+    else:
+        # 開発環境（子DB）
+        _REQUIRED_ENV = ["DB_HOST", "DB_NAME", "DB_READUSER", "DB_READPASSWORD", "DB_PORT"]
+        _missing = [k for k in _REQUIRED_ENV if not os.getenv(k)]
+        if _missing:
+            raise EnvironmentError(f".envに必要な環境変数が設定されていません: {_missing}")
+        
+        return {
+            "host": os.getenv("DB_HOST"),
+            "dbname": os.getenv("DB_NAME"),
+            "user": os.getenv("DB_READUSER"),
+            "password": os.getenv("DB_READPASSWORD"),
+            "port": int(os.getenv("DB_PORT")),
+            "sslmode": os.getenv("DB_SSLMODE", "require"),
+        }
 
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_READUSER"),
-    "password": os.getenv("DB_READPASSWORD"),
-    "port": int(os.getenv("DB_PORT")),
-}
+DB_CONFIG = get_db_config()
 
 app = FastAPI(title="学位検索API", version="1.0.0")
 
@@ -37,6 +66,11 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
 
 def get_connection():
     try:
@@ -84,6 +118,7 @@ def search_programs(
 
     query = """
         SELECT
+            dp.id,
             dp.program_name,
             u.country,
             u.name AS university_name,
@@ -95,7 +130,8 @@ def search_programs(
             tp.normalized_monthly_amount,
             tp.normalization_note,
             dp.is_online,
-            dp.last_seen
+            dp.last_seen,
+            dp.source_url
         FROM degree_programs dp
         JOIN universities u ON dp.university_id = u.id
         LEFT JOIN program_tuition_map ptm ON ptm.degree_program_id = dp.id
@@ -163,21 +199,89 @@ def search_programs(
 
             return [
                 {
-                    "program_name": row[0],
-                    "country": row[1],
-                    "university_name": row[2],
-                    "degree_level": row[3],
-                    "course_type": row[4],
-                    "amount": row[5],
-                    "currency": row[6],
-                    "tuition_type": row[7],
-                    "normalized_monthly_amount": float(row[8]) if row[8] is not None else None,
-                    "normalization_note": row[9],
-                    "is_online": row[10],
-                    "last_seen": row[11].isoformat() if row[11] else None
+                    "id": row[0],
+                    "program_name": row[1],
+                    "country": row[2],
+                    "university_name": row[3],
+                    "degree_level": row[4],
+                    "course_type": row[5],
+                    "amount": row[6],
+                    "currency": row[7],
+                    "tuition_type": row[8],
+                    "normalized_monthly_amount": float(row[9]) if row[9] is not None else None,
+                    "normalization_note": row[10],
+                    "is_online": row[11],
+                    "last_seen": row[12].isoformat() if row[12] else None,
+                    "source_url": row[13]
                 }
                 for row in results
             ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SQL execution failed: {str(e)}")
+    finally:
+        close_connection(conn)
+
+
+@app.get("/program/{program_id}")
+def get_program(program_id: int):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    dp.id,
+                    dp.program_name,
+                    dp.course_type,
+                    dp.is_online,
+                    dp.source_url,
+                    dp.last_seen,
+                    u.name AS university_name,
+                    u.country
+                FROM degree_programs dp
+                JOIN universities u ON dp.university_id = u.id
+                WHERE dp.id = %s
+            """, (program_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="Program not found")
+            program = {
+                "id": row[0],
+                "program_name": row[1],
+                "course_type": row[2],
+                "is_online": row[3],
+                "source_url": row[4],
+                "last_seen": row[5].isoformat() if row[5] else None,
+                "university_name": row[6],
+                "country": row[7],
+            }
+
+            cur.execute("""
+                SELECT
+                    tp.degree_level,
+                    tp.amount,
+                    tp.currency,
+                    tp.tuition_type,
+                    tp.normalized_monthly_amount,
+                    tp.normalization_note
+                FROM tuition_patterns tp
+                JOIN program_tuition_map ptm ON ptm.tuition_pattern_id = tp.id
+                WHERE ptm.degree_program_id = %s
+                ORDER BY tp.tuition_type, tp.amount NULLS LAST
+            """, (program_id,))
+            program["tuition_records"] = [
+                {
+                    "degree_level": r[0],
+                    "amount": r[1],
+                    "currency": r[2],
+                    "tuition_type": r[3],
+                    "normalized_monthly_amount": float(r[4]) if r[4] is not None else None,
+                    "normalization_note": r[5],
+                }
+                for r in cur.fetchall()
+            ]
+            return program
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SQL execution failed: {str(e)}")
     finally:
