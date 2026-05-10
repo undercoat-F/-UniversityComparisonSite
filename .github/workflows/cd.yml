@@ -10,11 +10,30 @@ jobs:
   deploy-railway:
     name: Deploy to Railway
     runs-on: ubuntu-latest
-    if: ${{ secrets.RAILWAY_TOKEN != '' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate required deploy secrets
+        shell: bash
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_NAME: ${{ secrets.RAILWAY_SERVICE_NAME }}
+        run: |
+          missing=0
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "RAILWAY_TOKEN is not set"
+            missing=1
+          fi
+          if [ -z "$RAILWAY_SERVICE_NAME" ]; then
+            echo "RAILWAY_SERVICE_NAME is not set"
+            missing=1
+          fi
+          if [ "$missing" -eq 1 ]; then
+            echo "Missing required secrets. Set them in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli
@@ -28,12 +47,26 @@ jobs:
     name: Post-deploy health check
     runs-on: ubuntu-latest
     needs: deploy-railway
-    if: ${{ always() && secrets.HEALTHCHECK_URL != '' }}
 
     steps:
+      - name: Check whether health check is configured
+        id: health
+        shell: bash
+        env:
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          if [ -z "$HEALTHCHECK_URL" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "HEALTHCHECK_URL is not set. Health check will be skipped."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Wait for deploy to complete
+        if: steps.health.outputs.enabled == 'true'
         run: sleep 30
 
       - name: Check API health endpoint
+        if: steps.health.outputs.enabled == 'true'
         run: |
           curl -fsS "${{ secrets.HEALTHCHECK_URL }}"
