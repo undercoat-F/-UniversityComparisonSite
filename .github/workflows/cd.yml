@@ -26,10 +26,6 @@ jobs:
             echo "RAILWAY_TOKEN is not set"
             missing=1
           fi
-          if [ -z "$RAILWAY_SERVICE_NAME" ]; then
-            echo "RAILWAY_SERVICE_NAME is not set"
-            missing=1
-          fi
           if [ "$missing" -eq 1 ]; then
             echo "Missing required secrets. Set them in Settings > Secrets and variables > Actions."
             exit 1
@@ -39,9 +35,18 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy
+        shell: bash
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service ${{ secrets.RAILWAY_SERVICE_NAME }} --detach
+          RAILWAY_SERVICE_NAME: ${{ secrets.RAILWAY_SERVICE_NAME }}
+        run: |
+          if [ -n "$RAILWAY_SERVICE_NAME" ]; then
+            echo "Deploy target: service name"
+            railway up --service "$RAILWAY_SERVICE_NAME" --detach
+          else
+            echo "RAILWAY_SERVICE_NAME is empty. Deploying to linked/default service."
+            railway up --detach
+          fi
 
   verify:
     name: Post-deploy health check
