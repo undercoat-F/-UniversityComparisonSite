@@ -21,6 +21,84 @@ CANDIDATE_URLS = [
     # 例:
     # "https://www.coursera.org/degrees",
     # "https://www.futurelearn.com/degrees",
+
+
+    # --- UK ---
+    "https://www.manchester.ac.uk/study/undergraduate/courses/", 
+    "https://www.manchester.ac.uk/study/masters/courses/list/",
+     "https://www.birmingham.ac.uk/study/undergraduate/courses",
+     "https://www.birmingham.ac.uk/study/postgraduate/taught/courses",
+     "https://www.bristol.ac.uk/study/undergraduate/courses/",
+     "https://www.bristol.ac.uk/study/postgraduate/taught/courses/",
+     "https://www.leeds.ac.uk/undergraduate-courses",
+     "https://courses.leeds.ac.uk/",
+     "https://www.southampton.ac.uk/courses/undergraduate",
+     "https://www.southampton.ac.uk/courses/postgraduate-taught",
+     "https://www.york.ac.uk/study/undergraduate/courses/",
+     "https://www.york.ac.uk/study/postgraduate-taught/courses/",
+     "https://www.exeter.ac.uk/study/undergraduate/courses/",
+     "https://www.exeter.ac.uk/study/postgraduate/courses/",
+     "https://www.sheffield.ac.uk/undergraduate/courses",
+     "https://www.sheffield.ac.uk/postgraduate/taught/courses",
+
+    # --- Ireland ---
+     "https://www.ucd.ie/courses/",
+     "https://www.tcd.ie/courses/",   # JSサイト確認済み　Cloudflare Bot保護確認済み、不可
+     "https://www.universityofgalway.ie/courses/",
+     "https://www.ucc.ie/en/study/courses/",
+     "https://www.universityofgalway.ie/courses/",
+    "https://www.ucc.ie/en/study/courses/",
+
+    # --- Australia ---
+     "https://www.sydney.edu.au/courses/",
+    "https://study.unimelb.edu.au/find", 
+    "https://www.unsw.edu.au/study",
+    "https://www.monash.edu/study/courses",
+    "https://www.uq.edu.au/study/options",
+    "https://www.adelaide.edu.au/degree-finder/",
+    "https://www.anu.edu.au/study",
+    "https://www.deakin.edu.au/course",
+    "https://www.cdu.edu.au/study",
+    "https://www.latrobe.edu.au/courses",
+    "https://www.murdoch.edu.au/study",
+    "https://www.utas.edu.au/courses", 
+    "https://www.vu.edu.au/study-at-vu/courses",
+
+    # --- New Zealand ---
+    "https://www.auckland.ac.nz/en/study/study-options/find-a-study-option.html",
+    "https://www.otago.ac.nz/courses",
+    "https://www.wgtn.ac.nz/study/programmes-courses",
+    "https://www.openpolytechnic.ac.nz/qualifications-and-courses/",
+    "https://www.massey.ac.nz/study/all-qualifications-and-degrees/",
+
+    # --- Canada ---
+    "https://www.utoronto.ca/academics/programs-directory",
+    "https://www.mcgill.ca/study/",
+    "https://www.ubc.ca/academics/",
+    "https://www.ualberta.ca/en/admissions-programs/",
+    "https://www.yorku.ca/programs/",
+    "https://www.queensu.ca/academics/programs",
+    "https://www.uvic.ca/programs/",
+    "https://www.sfu.ca/students/calendar/programs.html",
+
+    # --- USA ---
+    "https://www.asu.edu/programs/",
+    "https://www.purdue.edu/academics/",
+    "https://www.umass.edu/academics",
+    "https://www.pennstateworldcampus.psu.edu/degrees-and-certificates/",
+    "https://www.umgc.edu/online-degrees",
+    "https://www.wgu.edu/online-degree-programs.html",
+    "https://ecampus.oregonstate.edu/online-degrees/",
+    "https://www.snhu.edu/online-degrees",
+
+    # --- Europe / Asia / Africa (distance-learning reference) ---
+    "https://www.ou.nl/en/-/study-offers",                    # Open Universiteit (NL)
+    "https://www.uoc.edu/en/studies",                         # Open University of Catalonia (ES)
+    "https://www.unisa.ac.za/sites/corporate/default/Apply-for-admission/Undergraduate-qualifications",
+    "https://www.unisa.ac.za/sites/corporate/default/Apply-for-admission/Honours-degrees-&-postgraduate-diplomas",
+    "https://www.ignou.ac.in/ignou/aboutignou/school",        # IGNOU (IN)
+    "https://www.oum.edu.my/programmes/",                     # Open University Malaysia
+
 ]
 
 KEYWORDS = ["bachelor", "master", "phd", "degree", "course", "programme", "tuition", "fee"]
