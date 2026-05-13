@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
+↑python3 で実行することを明示
+shebang（シバン）とエンコーディング宣言
+"""
+
+"""
 開発ブランチ DB → 親ブランチ（本番）DB への同期スクリプト
 
 用途：
@@ -16,7 +21,7 @@
 import os
 import sys
 import psycopg2
-from psycopg2 import sql, Error
+from psycopg2 import Error
 from dotenv import load_dotenv
 
 load_dotenv(encoding="utf-8-sig")
@@ -44,7 +49,7 @@ def get_parent_db_params():
         )
     
     # 接続文字列を parse （簡易版）
-    from urllib.parse import urlparse, parse_qs
+    from urllib.parse import urlparse
     parsed = urlparse(parent_owner_connection)
     
     return {
@@ -93,10 +98,10 @@ def create_parent_schema(parent_conn):
                 is_online BOOLEAN DEFAULT FALSE,
                 source_url TEXT,
                 last_seen TIMESTAMP,
-                quality_flag VARCHAR(50) DEFAULT 'high',
+                quality_flag VARCHAR(50) DEFAULT 'low',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """)#quality_flagは欠損の方が起きやすいから、lowから始める
         
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS tuition_patterns (
@@ -113,7 +118,7 @@ def create_parent_schema(parent_conn):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (degree_level, amount, currency, fee_type, tuition_type)
             );
-        """)
+        """)#decimalは、合計10桁、そのうち小数点以下が2桁という意味　floatは誤差が出やすいらしい
         
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS program_tuition_map (
@@ -121,7 +126,7 @@ def create_parent_schema(parent_conn):
                 tuition_pattern_id INTEGER NOT NULL REFERENCES tuition_patterns(id) ON DELETE CASCADE,
                 PRIMARY KEY (degree_program_id, tuition_pattern_id)
             );
-        """)
+        """)# ON DELETE CASCADE 親が消えたら自動で子も消えるという指定
         
         parent_conn.commit()
         print("✓ 親ブランチのスキーマを作成/確認")
@@ -178,7 +183,7 @@ def copy_table(dev_conn, parent_conn, table_name):
         # 親 DB へ INSERT
         parent_cursor = parent_conn.cursor()
         
-        # COPY コマンド使用（高速）
+        # COPY コマンド使用（高速）らしい？
         # ただし簡易版として INSERT で実装
         placeholders = ", ".join(["%s"] * len(columns))
         col_names = ", ".join(columns)
@@ -213,7 +218,7 @@ def verify_sync(dev_conn, parent_conn):
         parent_cursor.execute(f"SELECT COUNT(*) FROM {table};")
         parent_count = parent_cursor.fetchone()[0]
         
-        match = "✓" if dev_count == parent_count else "✗"
+        match = "✓" if dev_count == parent_count else "✗" #ifがTrueなら✓、Falseなら✗を表示（三項演算子というらしい）
         print(f"  {match} {table}: 開発={dev_count}, 親={parent_count}")
         
         if dev_count != parent_count:

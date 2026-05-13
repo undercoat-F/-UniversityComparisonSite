@@ -1,0 +1,66 @@
+ファイルは手動作成
+
+URL                                                          結果         詳細
+----------------------------------------------------------------------------------------------------
+✅ https://www.manchester.ac.uk/study/undergraduate/courses/  [OK      ] httpx / キーワード: master, phd, course, programme, tuition
+✅ https://www.manchester.ac.uk/study/masters/courses/list/   [OK      ] httpx / キーワード: master, phd, degree, course, programme
+✅ https://www.birmingham.ac.uk/study/undergraduate/courses   [OK      ] httpx / キーワード: fee
+✅ https://www.birmingham.ac.uk/study/postgraduate/taught/courses [OK      ] httpx / キーワード: fee
+✅ https://www.bristol.ac.uk/study/undergraduate/courses/     [OK      ] httpx / キーワード: degree, course, programme, tuition, fee
+✅ https://www.bristol.ac.uk/study/postgraduate/taught/courses/ [OK      ] httpx / キーワード: course, programme, fee
+✅ https://www.leeds.ac.uk/undergraduate-courses              [OK      ] httpx / キーワード: master, degree, course
+✅ https://courses.leeds.ac.uk/                               [OK      ] httpx / キーワード: master, phd, degree, course, fee
+✅ https://www.southampton.ac.uk/courses/undergraduate        [OK      ] httpx / キーワード: master, phd, degree, course, programme
+✅ https://www.southampton.ac.uk/courses/postgraduate-taught  [OK      ] httpx / キーワード: master, phd, degree, course, programme
+✅ https://www.york.ac.uk/study/undergraduate/courses/        [OK      ] httpx / キーワード: master, degree, course, programme, fee
+✅ https://www.york.ac.uk/study/postgraduate-taught/courses/  [OK      ] httpx / キーワード: master, phd, degree, course, programme
+✅ https://www.exeter.ac.uk/study/undergraduate/courses/      [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+✅ https://www.exeter.ac.uk/study/postgraduate/courses/       [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+✅ https://www.sheffield.ac.uk/undergraduate/courses          [OK      ] httpx / キーワード: phd, degree, course, programme, tuition
+✅ https://www.sheffield.ac.uk/postgraduate/taught/courses    [OK      ] httpx / キーワード: master, phd, course, programme, tuition
+❌ https://www.ucd.ie/courses/                                [ERROR   ] [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1000)
+✅ https://www.tcd.ie/courses/                                [OK      ] httpx / キーワード: master, course, programme, fee
+✅ https://www.universityofgalway.ie/courses/                 [OK      ] httpx / キーワード: master, phd, course, programme, fee
+✅ https://www.ucc.ie/en/study/courses/                       [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+✅ https://www.universityofgalway.ie/courses/                 [OK      ] httpx / キーワード: master, phd, course, programme, fee
+✅ https://www.ucc.ie/en/study/courses/                       [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+✅ https://www.sydney.edu.au/courses/                         [OK      ] httpx / キーワード: master, course
+❌ https://study.unimelb.edu.au/find                          [BLOCKED ] Cloudflare Bot保護
+✅ https://www.unsw.edu.au/study                              [OK      ] httpx / キーワード: master, degree, course, tuition, fee
+❌ https://www.monash.edu/study/courses                       [BLOCKED ] Cloudflare Bot保護
+❌ https://www.uq.edu.au/study/options                        [EMPTY   ] キーワード未検出（構造確認が必要）
+✅ https://www.adelaide.edu.au/degree-finder/                 [OK      ] httpx / キーワード: bachelor, master, degree, course, tuition
+✅ https://www.anu.edu.au/study                               [OK      ] httpx / キーワード: degree, course, tuition, fee
+❌ https://www.deakin.edu.au/course                           [BLOCKED ] Cloudflare Bot保護
+✅ https://www.cdu.edu.au/study                               [OK      ] httpx / キーワード: master, phd, degree, course, fee
+✅ https://www.latrobe.edu.au/courses                         [OK      ] httpx / キーワード: bachelor, phd, degree, course, fee
+✅ https://www.murdoch.edu.au/study                           [OK      ] httpx / キーワード: bachelor, degree, course, programme, fee
+❌ https://www.utas.edu.au/courses                            [BLOCKED ] Cloudflare Bot保護
+✅ https://www.vu.edu.au/study-at-vu/courses                  [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+✅ https://www.auckland.ac.nz/en/study/study-options/find-a-study-option.html [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+❌ https://www.otago.ac.nz/courses                            [BLOCKED ] Cloudflare Bot保護
+✅ https://www.wgtn.ac.nz/study/programmes-courses            [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+✅ https://www.openpolytechnic.ac.nz/qualifications-and-courses/ [OK      ] httpx / キーワード: bachelor, degree, course, fee
+✅ https://www.massey.ac.nz/study/all-qualifications-and-degrees/ [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+✅ https://www.utoronto.ca/academics/programs-directory       [OK      ] requests(fallback) / キーワード: bachelor, master, degree, fee
+✅ https://www.mcgill.ca/study/                               [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+✅ https://www.ubc.ca/academics/                              [OK      ] httpx / キーワード: master, degree, course
+❌ https://www.ualberta.ca/en/admissions-programs/            [EMPTY   ] HTML 0文字 (httpx)
+✅ https://www.yorku.ca/programs/                             [OK      ] httpx / キーワード: degree, course, tuition, fee
+✅ https://www.queensu.ca/academics/programs                  [OK      ] httpx / キーワード: bachelor, master, phd, degree, course
+✅ https://www.uvic.ca/programs/                              [OK      ] httpx / キーワード: bachelor, degree, tuition, fee
+❌ https://www.sfu.ca/students/calendar/programs.html         [EMPTY   ] キーワード未検出（構造確認が必要）
+❌ https://www.asu.edu/programs/                              [EMPTY   ] キーワード未検出（構造確認が必要）
+❌ https://www.purdue.edu/academics/                          [EMPTY   ] キーワード未検出（構造確認が必要）
+✅ https://www.umass.edu/academics                            [OK      ] requests(fallback) / キーワード: master, degree
+❌ https://www.pennstateworldcampus.psu.edu/degrees-and-certificates/ [ERROR   ] [Errno 11001] getaddrinfo failed
+✅ https://www.umgc.edu/online-degrees                        [OK      ] httpx / キーワード: bachelor, master, degree, course, tuition
+✅ https://www.wgu.edu/online-degree-programs.html            [OK      ] httpx / キーワード: bachelor, master, degree, course, tuition
+✅ https://ecampus.oregonstate.edu/online-degrees/            [OK      ] httpx / キーワード: bachelor, phd, degree, course, tuition
+✅ https://www.snhu.edu/online-degrees                        [OK      ] requests(fallback) / キーワード: fee
+✅ https://www.ou.nl/en/-/study-offers                        [OK      ] httpx / キーワード: bachelor, master
+✅ https://www.uoc.edu/en/studies                             [OK      ] httpx / キーワード: bachelor, master, degree, course, programme
+✅ https://www.unisa.ac.za/sites/corporate/default/Apply-for-admission/Undergraduate-qualifications [OK      ] httpx / キーワード: master, degree, programme, fee
+✅ https://www.unisa.ac.za/sites/corporate/default/Apply-for-admission/Honours-degrees-&-postgraduate-diplomas [OK      ] httpx / キーワード: master, degree, programme, fee
+✅ https://www.ignou.ac.in/ignou/aboutignou/school            [OK      ] httpx / キーワード: programme
+✅ https://www.oum.edu.my/programmes/                         [OK      ] httpx / キーワード: bachelor, master, phd, degree, course

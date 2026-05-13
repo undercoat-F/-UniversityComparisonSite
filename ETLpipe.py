@@ -157,7 +157,7 @@ async def run_etl():
         print(f"\nクローリング開始: {url} (depth={crawl_depth})")
 
         try:
-            await crawl_main(url, crawl_depth, log_dt=log_dt)
+            await crawl_main(url, crawl_depth, log_dt)#log_dt = log_dtだった
         except Exception as e:
             if isinstance(e, HTTPError) and e.response.status_code == 404:
                 print(f"[ETL WARNING] 404エラー: {url} をスキップします。")
