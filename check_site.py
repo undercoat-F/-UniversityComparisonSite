@@ -102,8 +102,8 @@ CANDIDATE_URLS = [
 ]
 
 KEYWORDS = ["bachelor", "master", "phd", "degree", "course", "programme", "tuition", "fee"]
-CLOUDFLARE_SIGNS = ["just a moment", "enable javascript and cookies", "_cf_chl_opt"]
-JS_SIGNS = ["<div id=\"app\"", "<div id=\"root\"", "__NEXT_DATA__", "window.__INITIAL_STATE__"]
+CLOUDFLARE_SIGNS = ["just a moment", "enable javascript and cookies", "_cf_chl_opt"]#Cloudflareのチャレンジページに共通して見られるフレーズらしい
+JS_SIGNS = ["<div id=\"app\"", "<div id=\"root\"", "__NEXT_DATA__", "window.__INITIAL_STATE__"]#ReactやVue、Next.jsなどのSPAでよく見られるHTMLの特徴　これらがある場合、BeautifulSoupだけではコンテンツを取得できない可能性が高い
 
 HEADERS = {
     "User-Agent": (

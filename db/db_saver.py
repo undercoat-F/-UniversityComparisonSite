@@ -243,7 +243,7 @@ def create_schema(conn):
     finally:
         cursor.close()
 
-
+#正規化　判定エラー防止用のstrip,lower 
 def parse_bool(raw):
     return str(raw).strip().lower() in ("1", "true", "t", "yes", "y")
 
@@ -488,14 +488,14 @@ def resolve_csv_dir(csv_dir):
     project_root = script_dir.parent
 
     candidates = []
-    if input_path.is_absolute():
+    if input_path.is_absolute():#絶対パスか否かの判定
         candidates.append(input_path)
     else:
         candidates.extend([
             Path.cwd() / input_path,
             script_dir / input_path,
             project_root / input_path,
-        ])
+        ])#相対パスの場合は、実行場所、スクリプト場所、プロジェクトルートからのパスを候補にする
 
     # 順序を維持したまま重複を除去
     unique_candidates = []

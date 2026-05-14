@@ -27,6 +27,7 @@ db/csv_output/
 db/csv_output_snapshots/
 失敗時DBログ/
 results.json
+.VSCodeCounter/
 
 # OS
 .DS_Store

@@ -154,6 +154,8 @@ def truncate_parent_tables(parent_conn):
             cursor.execute("ALTER SEQUENCE universities_id_seq RESTART WITH 1;")
             cursor.execute("ALTER SEQUENCE degree_programs_id_seq RESTART WITH 1;")
             cursor.execute("ALTER SEQUENCE tuition_patterns_id_seq RESTART WITH 1;")
+            #自動裁判の番号を再び１から振りなおすということ
+            #TRUNCATE TABLE universities RESTART IDENTITY; みたいな書き方もあるらしい？
         except Error:
             # シーケンスが存在しない可能性
             pass
