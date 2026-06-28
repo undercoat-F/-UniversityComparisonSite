@@ -1,0 +1,177 @@
+import asyncio
+import ast
+import json
+import os
+import sqlite3
+import shutil
+import time
+from datetime import datetime
+import traceback
+from urllib.parse import urlparse
+
+from ETL.dispatcher import run_dispatcher
+from crawler.metrics import analyze_degree_duplicates
+
+
+# (URL, depth) 縺ｮ繧ｿ繝励Ν蠖｢蠑上・URL_LIST_PATH = os.path.join("ETL", "URLs.txt")
+URL_DB_PATH = os.path.join("ETL", "seed_urls.db")
+
+
+def write_etl_error_log(url, stage, exc, log_dt):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    os.makedirs("log", exist_ok=True)
+    with open(f"log/etl_error_log_{log_dt}.txt", "a", encoding="utf-8") as f:
+        f.write(f"[{ts}] stage={stage} url={url} error={type(exc).__name__}: {exc}\n")
+        f.write(traceback.format_exc())
+        f.write("\n")
+
+
+def make_site_slug(url):
+    parsed = urlparse(url)
+    path = parsed.path.strip("/").replace("/", "__") or "root"
+    return f"{parsed.netloc}__{path}"
+
+
+def snapshot_csv_outputs(url, log_dt, src_dir="db/csv_output"):
+    snapshot_dir = os.path.join("db", "csv_output_snapshots", f"{log_dt}__{make_site_slug(url)}")
+    os.makedirs(snapshot_dir, exist_ok=True)
+
+    for name in ("universities.csv", "degree_programs.csv", "tuition_patterns.csv", "program_tuition_map.csv"):
+        src = os.path.join(src_dir, name)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(snapshot_dir, name))
+
+
+def load_targets_from_db(db_path=URL_DB_PATH):
+    if not os.path.exists(db_path):
+        return []
+
+    query = """
+        SELECT root_url, depth
+        FROM seed_urls
+        WHERE enabled = 1
+        ORDER BY id
+    """
+
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(query).fetchall()
+        return [(str(url), int(depth)) for url, depth in rows]
+    except Exception:
+        return []
+
+
+def load_targets_from_txt(path=URL_LIST_PATH):
+    if not os.path.exists(path):
+        return []
+
+    with open(path, "r", encoding="utf-8") as f:
+        targets = []
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if not line.startswith("("):
+                continue
+
+            tuple_expr = line[:-1] if line.endswith(",") else line
+            try:
+                item = ast.literal_eval(tuple_expr)
+            except Exception:
+                continue
+
+            if isinstance(item, tuple) and len(item) == 2:
+                targets.append((str(item[0]), int(item[1])))
+    return targets
+
+
+def load_targets():
+    targets = load_targets_from_db()
+    if targets:
+        return targets
+    return load_targets_from_txt()
+
+
+def write_extraction_logs(site_states, log_dt):
+    os.makedirs("log", exist_ok=True)
+    jsonl_path = os.path.join("log", f"extracted_records_{log_dt}.jsonl")
+    summary_path = os.path.join("log", f"extracted_summary_{log_dt}.txt")
+
+    total_records = 0
+    total_degrees = 0
+    with open(jsonl_path, "w", encoding="utf-8") as jf:
+        for site in site_states:
+            for record in site.extracted_records:
+                total_records += 1
+                degree_count = len(record.get("degrees", []))
+                total_degrees += degree_count
+                payload = {
+                    "domain": site.domain,
+                    "url": record.get("url"),
+                    "title": record.get("title"),
+                    "timestamp": record.get("timestamp"),
+                    "country": record.get("country"),
+                    "degree_count": degree_count,
+                    "degrees": record.get("degrees", []),
+                }
+                jf.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    with open(summary_path, "w", encoding="utf-8") as sf:
+        sf.write(f"records={total_records}\n")
+        sf.write(f"degrees={total_degrees}\n")
+        for site in site_states:
+            sf.write(
+                f"domain={site.domain} records={len(site.extracted_records)} "
+                f"success={site.success_count} errors={site.error_count} "
+                f"fallback={site.fallback_count} sitemap_candidates={len(site.sitemap_candidates)}\n"
+            )
+
+    return jsonl_path, summary_path, total_records, total_degrees
+
+
+async def run_etl():
+    targets = load_targets()
+    log_dt = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[SCHEDULER] ETL髢句ｧ・targets={len(targets)}", flush=True)
+    os.makedirs("log", exist_ok=True)
+    with open(f"log/crawl_log_{log_dt}.txt", "a", encoding="utf-8") as f:
+        f.write(f"\n{'#'*10}\n")
+        f.write(f"# ETL髢句ｧ・ {ts_start}  ({len(targets)}繧ｵ繧､繝・\n")
+        f.write(f"{'#'*10}\n\n")
+
+    try:
+        site_states = await run_dispatcher(targets)
+    except Exception as e:
+        write_etl_error_log("ALL", "dispatcher", e, log_dt)
+        raise
+
+    for site in site_states:
+        print(
+            "[SCHEDULER] "
+            f"domain={site.domain} success={site.success_count} errors={site.error_count} "
+            f"fallback={site.fallback_count} visited={len(site.visited)} "
+            f"sitemap_candidates={len(site.sitemap_candidates)}"
+        )
+        if site.error_count:
+            for error_msg in site.errors:
+                write_etl_error_log(site.domain, "crawl", RuntimeError(error_msg), log_dt)
+
+    jsonl_path, summary_path, total_records, total_degrees = write_extraction_logs(site_states, log_dt)
+
+    ts_end = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(f"log/crawl_log_{log_dt}.txt", "a", encoding="utf-8") as f:
+        f.write(f"{'#'*10}\n")
+        f.write(f"# ETL螳御ｺ・ {ts_end}\n")
+        f.write(f"# 謚ｽ蜃ｺ繝ｬ繧ｳ繝ｼ繝・ {total_records} / 謚ｽ蜃ｺ蟄ｦ菴・ {total_degrees}\n")
+        f.write(f"# 謚ｽ蜃ｺJSONL: {jsonl_path}\n")
+        f.write(f"# 謚ｽ蜃ｺ繧ｵ繝槭Μ: {summary_path}\n")
+        f.write(f"{'#'*10}\n\n")
+
+    print("\n繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｩ螳溯｡悟ｮ御ｺ・ｼ・)
+    print(f"繧ｨ繝ｩ繝ｼ隧ｳ邏ｰ縺ｯ log/etl_error_log_{log_dt}.txt 繧堤｢ｺ隱阪＠縺ｦ縺上□縺輔＞縲・)
+    print(f"謚ｽ蜃ｺ邨先棡(JSONL): {jsonl_path}")
+    print(f"謚ｽ蜃ｺ繧ｵ繝槭Μ: {summary_path}")
+
+if __name__ == "__main__":
+    asyncio.run(run_etl())

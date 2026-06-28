@@ -1,0 +1,34 @@
+# PostgreSQL接続設定
+# DB_HOST=localhost
+# DB_NAME=degree_search
+# DB_USER=postgres
+# DB_PASSWORD=72coat
+
+# DB_PORT=5432 #PostgreSQLのデフォルトポート
+
+# CSV出力ディレクトリ
+CSV_OUTPUT_DIR=db/csv_output
+
+# DB_READUSER = readonly
+# DB_READPASSWORD = searcher987
+
+#NeonDB接続設定
+DB_HOST = ep-silent-mud-aogpauup-pooler.c-2.ap-southeast-1.aws.neon.tech
+DB_NAME = neondb
+DB_USER = neondb_owner
+DB_PASSWORD = npg_FpN17TAPKZSR
+DB_PORT = 5432
+
+DB_READUSER = readonly
+DB_READPASSWORD = 9876ReadOnly_UniversityComparison
+
+# 親ブランチ（本番・同期先）DB 接続設定
+PARENT_DB_OWNER_CONNECTION = postgresql://neondb_owner:npg_FpN17TAPKZSR@ep-super-voice-ao7scrzy-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+PARENT_DB_READONLY_CONNECTION = postgresql://readonly:9876ReadOnly_UniversityComparison@ep-super-voice-ao7scrzy-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+
+# API用（親DBのreadonlyロール）
+PARENT_DB_HOST = ep-super-voice-ao7scrzy-pooler.c-2.ap-southeast-1.aws.neon.tech
+PARENT_DB_NAME = neondb
+PARENT_DB_USER = readonly
+PARENT_DB_PASSWORD = 9876ReadOnly_UniversityComparison
+PARENT_DB_PORT = 5432
