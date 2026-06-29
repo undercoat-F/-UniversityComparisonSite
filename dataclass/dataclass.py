@@ -228,6 +228,41 @@ class SeedDiscovery:
         if current is None or score > current:
             self.seed_candidates[url] = score
 
+
+@dataclass
+class SearchRequest:
+    source_url: str
+    source_domain: str
+    university_names: list[str]
+    content_type: str
+    candidate_lines: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SearchHit:
+    query: str
+    url: str
+    title: str
+    snippet: str
+    score: float
+    is_course_like: bool
+    search_form_detected: bool = False
+    course_list_detected: bool = False
+
+
+@dataclass
+class SearchResult:
+    source_url: str
+    source_domain: str
+    university_names: list[str]
+    hits: list[SearchHit]
+    root_seed_urls: list[str]
+    detailed_seed_urls: list[str]
+    course_list_found: bool
+    recommended_depth: int
+    duplicate_root_urls: list[str]
+    errors: list[str] = field(default_factory=list)
+
 # 監視ページの特徴を表すクラス
 class ContentType(Enum):
     PDF = "pdf"
@@ -250,3 +285,15 @@ class PageAnalysis:
     extracted_universitynamelist: list[str] = field(default_factory=list)
 
     response : Optional[Any] = None
+
+@dataclass
+class SearchRunLogRecord:
+    source_url: str
+    source_domain: str
+    api_type: str
+    first_search_count: int
+    internal_link_extracted_count: int
+    fallback_executed: bool
+    api_usage_count: int
+    run_id: Optional[int] = None
+    source_stage: str = "seed_searcher"

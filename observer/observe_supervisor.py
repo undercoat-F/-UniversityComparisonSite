@@ -28,6 +28,7 @@ class ObserveStackItem:
 	page_analysis: PageAnalysis
 	university_names: list[str]
 	request_logs: list[dict[str, Any]]
+	observe_run_id: int | None = None
 
 
 class InMemoryObserveQueue:
@@ -57,6 +58,7 @@ def _slice_new_logs(before_len: int) -> list[dict[str, Any]]:
 def run_supervisor(
 	source_urls: list[str] | None = None,
 	stack_queue: InMemoryObserveQueue | None = None,
+	observe_run_id: int | None = None,
 ) -> tuple[list[ObserveRunResult], InMemoryObserveQueue]:
 	urls = source_urls or OBSERVE_SOURCE_URLS
 	queue = stack_queue or InMemoryObserveQueue()
@@ -76,6 +78,7 @@ def run_supervisor(
 					page_analysis=page_analysis,
 					university_names=list(page_analysis.extracted_universitynamelist),
 					request_logs=new_logs,
+					observe_run_id=observe_run_id,
 				)
 			)
 			stacked_for_searcher = True
