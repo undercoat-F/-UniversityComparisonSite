@@ -11,7 +11,7 @@ import psycopg2
 import requests
 from dotenv import load_dotenv
 
-from dataclass.dataclass import SearchHit, SearchRequest, SearchResult, SeedDiscovery
+from dataclass.dataclass import SearchHit, SearchRequest, SearchResult, SeedDiscovery, SeedTransformInput
 from observer.observe_supervisor import ObserveStackItem
 from observer.search_log import SearchLogStore, SearchRunLogRecord
 
@@ -515,7 +515,39 @@ def search_seeds(item: ObserveStackItem, api: BraveSearchAPI | None = None) -> S
     return _search_seeds_sync(item=item, api=api)
 
 
-def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None) -> SearchResult:
+def _to_transform_input(
+    result: SearchResult,
+    *,
+    api_type: str,
+    first_search_count: int,
+    internal_link_extracted_count: int,
+    fallback_executed: bool,
+    api_usage_count: int,
+    run_id: int | None,
+    source_stage: str,
+) -> SeedTransformInput:
+    return SeedTransformInput(
+        source_url=result.source_url,
+        source_domain=result.source_domain,
+        university_names=list(result.university_names),
+        hits=list(result.hits),
+        root_seed_urls=list(result.root_seed_urls),
+        detailed_seed_urls=list(result.detailed_seed_urls),
+        course_list_found=result.course_list_found,
+        recommended_depth=result.recommended_depth,
+        duplicate_root_urls=list(result.duplicate_root_urls),
+        errors=list(result.errors),
+        api_type=api_type,
+        first_search_count=first_search_count,
+        internal_link_extracted_count=internal_link_extracted_count,
+        fallback_executed=fallback_executed,
+        api_usage_count=api_usage_count,
+        run_id=run_id,
+        source_stage=source_stage,
+    )
+
+
+def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None) -> SeedTransformInput:
     request = build_search_request(item)
     client_api = api or BraveSearchAPI()
     queries = _build_domain_discovery_queries(request)
@@ -529,7 +561,17 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
 
     if not client_api.enabled:
         errors.append("BRAVE_API_KEY is not set. search is skipped.")
-        return _build_result(request, [], errors)
+        base_result = _build_result(request, [], errors)
+        return _to_transform_input(
+            base_result,
+            api_type=client_api.api_type,
+            first_search_count=first_search_count,
+            internal_link_extracted_count=internal_link_extracted_count,
+            fallback_executed=fallback_executed,
+            api_usage_count=api_usage_count,
+            run_id=item.observe_run_id,
+            source_stage="seed_searcher",
+        )
 
     for query in queries:
         try:
@@ -632,7 +674,16 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
         finally:
             search_log_store.close()
 
-    return result
+    return _to_transform_input(
+        result,
+        api_type=client_api.api_type,
+        first_search_count=first_search_count,
+        internal_link_extracted_count=internal_link_extracted_count,
+        fallback_executed=fallback_executed,
+        api_usage_count=api_usage_count,
+        run_id=item.observe_run_id,
+        source_stage="seed_searcher",
+    )
 
 
 def to_seed_discovery(result: SearchResult) -> SeedDiscovery:
@@ -651,7 +702,7 @@ def to_seed_discovery(result: SearchResult) -> SeedDiscovery:
     return discovery
 
 
-def handle_observe_item(item: ObserveStackItem) -> SearchResult:
+def handle_observe_item(item: ObserveStackItem) -> SeedTransformInput:
     result = search_seeds(item)
     print(
         "[OBSERVE_SEARCHER] "
