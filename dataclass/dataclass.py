@@ -263,6 +263,17 @@ class SearchResult:
     duplicate_root_urls: list[str]
     errors: list[str] = field(default_factory=list)
 
+
+@dataclass
+class SeedTransformInput(SearchResult):
+    api_type: str = "brave"
+    first_search_count: int = 0
+    internal_link_extracted_count: int = 0
+    fallback_executed: bool = False
+    api_usage_count: int = 0
+    run_id: Optional[int] = None
+    source_stage: str = "seed_searcher"
+
 # 監視ページの特徴を表すクラス
 class ContentType(Enum):
     PDF = "pdf"
