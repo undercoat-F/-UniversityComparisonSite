@@ -5,6 +5,7 @@ import os
 import re
 from typing import Any
 from urllib.parse import urljoin, urlparse
+from xml.etree import ElementTree as ET
 
 import httpx
 import psycopg2
@@ -57,6 +58,8 @@ MAX_PROBE_URLS = 12
 PROBE_CONCURRENCY = 6
 MAX_INTERNAL_LINKS_PER_DOMAIN = 16
 MAX_FALLBACK_QUERIES = 2
+MAX_SITEMAP_URLS_PER_DOMAIN = 30
+MAX_SITEMAP_RECURSION = 3
 
 class BraveSearchAPI:
     """Brave Search API の薄いラッパー。"""
@@ -234,6 +237,101 @@ def _extract_internal_course_links(base_url: str, html: str) -> list[str]:
         if len(links) >= MAX_INTERNAL_LINKS_PER_DOMAIN:
             break
     return links
+
+
+def _extract_sitemap_directives(robots_text: str) -> list[str]:
+    sitemap_urls: list[str] = []
+    for line in robots_text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("sitemap:"):
+            url = stripped.split(":", 1)[1].strip()
+            if url:
+                sitemap_urls.append(url)
+    return sitemap_urls
+
+
+def _parse_sitemap_urls(xml_text: str) -> tuple[list[str], list[str]]:
+    """Return (urlset loc urls, nested sitemap urls)."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return [], []
+
+    ns = ""
+    if "}" in root.tag:
+        ns = root.tag[: root.tag.rfind("}") + 1]
+    tag_name = root.tag.split("}")[-1]
+
+    urls: list[str] = []
+    nested: list[str] = []
+
+    if tag_name == "urlset":
+        for url_elem in root.findall(f"{ns}url"):
+            loc_elem = url_elem.find(f"{ns}loc")
+            if loc_elem is not None and loc_elem.text:
+                urls.append(loc_elem.text.strip())
+    elif tag_name == "sitemapindex":
+        for sitemap_elem in root.findall(f"{ns}sitemap"):
+            loc_elem = sitemap_elem.find(f"{ns}loc")
+            if loc_elem is not None and loc_elem.text:
+                nested.append(loc_elem.text.strip())
+
+    return urls, nested
+
+
+def _discover_sitemap_course_urls(official_domains: set[str], errors: list[str]) -> list[str]:
+    discovered: list[str] = []
+
+    for domain in sorted(official_domains):
+        if not domain:
+            continue
+
+        sitemap_candidates = [f"https://{domain}/sitemap.xml"]
+        robots_url = f"https://{domain}/robots.txt"
+        try:
+            robots_resp = requests.get(robots_url, headers=DEFAULT_HEADERS, timeout=10, allow_redirects=True)
+            if robots_resp.status_code == 200:
+                for sm in _extract_sitemap_directives(robots_resp.text):
+                    if sm not in sitemap_candidates:
+                        sitemap_candidates.append(sm)
+        except requests.RequestException as exc:
+            errors.append(f"sitemap_robots_failed domain={domain}: {type(exc).__name__}: {exc}")
+
+        queue: list[tuple[str, int]] = [(url, 0) for url in sitemap_candidates]
+        visited_sitemaps: set[str] = set()
+
+        while queue:
+            sitemap_url, depth = queue.pop(0)
+            if depth > MAX_SITEMAP_RECURSION:
+                continue
+            if sitemap_url in visited_sitemaps:
+                continue
+            visited_sitemaps.add(sitemap_url)
+
+            try:
+                response = requests.get(sitemap_url, headers=DEFAULT_HEADERS, timeout=12, allow_redirects=True)
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                errors.append(f"sitemap_fetch_failed url={sitemap_url}: {type(exc).__name__}: {exc}")
+                continue
+
+            urls, nested_sitemaps = _parse_sitemap_urls(response.text)
+            for nested in nested_sitemaps:
+                if nested not in visited_sitemaps:
+                    queue.append((nested, depth + 1))
+
+            for url in urls:
+                if _domain(url) != domain:
+                    continue
+                path = (urlparse(url).path or "").lower()
+                if not any(keyword in path for keyword in COURSE_HINT_KEYWORDS):
+                    continue
+                if url not in discovered:
+                    discovered.append(url)
+                if len([u for u in discovered if _domain(u) == domain]) >= MAX_SITEMAP_URLS_PER_DOMAIN:
+                    break
+
+    return discovered
 
 
 def _probe_hit_sync(hit: SearchHit, errors: list[str]) -> SearchHit:
@@ -603,6 +701,28 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
 
     # 1) 公式ドメイン推定
     official_domains = _select_official_domains(hits, request.university_names)
+
+    # 1.5) 公式ドメインの sitemap からコース一覧候補を先取り
+    sitemap_urls = _discover_sitemap_course_urls(official_domains, errors)
+    for sitemap_url in sitemap_urls:
+        score = _course_like_score(
+            url=sitemap_url,
+            title="sitemap candidate",
+            snippet="sitemap discovered",
+            query="sitemap",
+        ) + 3.0
+        hit = SearchHit(
+            query="sitemap",
+            url=sitemap_url,
+            title="sitemap candidate",
+            snippet="sitemap discovered",
+            score=score,
+            is_course_like=True,
+            course_list_detected=True,
+        )
+        current = hits_by_url.get(sitemap_url)
+        if current is None or hit.score > current.score:
+            hits_by_url[sitemap_url] = hit
 
     # 2) 公式ドメイン内の内部リンク探索（courses/programmes っぽいリンク抽出）
     internal_links = _discover_internal_links_from_official_hits(hits, official_domains, errors)

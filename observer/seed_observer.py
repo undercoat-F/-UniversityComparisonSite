@@ -94,6 +94,8 @@ def get_crawl_delay(domain: str) -> float:
             crawl_delay = DEFAULT_TIMEOUT  # デフォルトのクロールディレイを設定
 
         return crawl_delay
+
+    return DEFAULT_TIMEOUT
     
 def pagetype_analyze(url: str, html: str) -> PageAnalysis:
     # ここでページのHTMLを解析して、PageTypeを判定する

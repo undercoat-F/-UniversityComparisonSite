@@ -86,6 +86,7 @@ Seed投入
 (supervisorから渡ってくるURLを整形してシードURLDBへ投入できる形へ変換　ここで、３の段階でコース一覧ページ等の物が見つかっていた場合はdepthを１等浅く、見つかっていなかった場合は少し深くして探索するプログラムにする必要がある。）
 　コース一覧ページが見つかった場合に depth を浅くする設計ですが、dispatcher.py の build_site_states() は 同一ドメインの複数URLを束ねて max_depth を最大値で統一します（dispatcher.py:32）。
 つまり同一ドメインに depth=1 と depth=3 の URL が混在すると、depth=3 が採用されます。浅い URL だけ depth を下げても効果が薄い点に注意が必要です。
+  
 
 
 ５．seed_adder
