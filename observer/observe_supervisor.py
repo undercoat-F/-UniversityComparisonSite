@@ -10,6 +10,11 @@ from observer import seed_observer
 
 OBSERVE_SOURCE_URLS: list[str] = [
     # "https://www.universitiesuk.ac.uk/",
+    #"https://note.com/chisyukangakusei/n/na0f368d97aef",
+    "https://www.mext.go.jp/a_menu/koutou/suuri_datascience_ai/mext_00005.html",
+    
+    "https://www.cicic.ca/869/resultats.canada?search=",
+    "https://www.cicic.ca/869/results.canada?search="
 ]
 
 

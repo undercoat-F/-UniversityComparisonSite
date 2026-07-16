@@ -1,0 +1,22 @@
+7月16日
+[OBSERVE_SEARCHER] source=https://note.com/chisyukangakusei/n/na0f368d97aef universities=0 hits=10 roots=8 course_like=True depth=1 dupes=0
+[OBSERVE_SEARCHER] errors=sitemap_fetch_failed url=https://apps.apple.com/sitemap.xml: HTTPError: 404 Client Error: Not Found for url: https://apps.apple.com/sitemap.xml; sitemap_fetch_failed url=https://note.com/sitemap.xml: HTTPError: 404 Client Error: Not Found for url: https://note.com/sitemap.xml
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 127, in <module>
+    main()
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 110, in main
+    summary = run_observer_pipeline(
+              ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 56, in run_observer_pipeline
+    dispatched_items = dispatch_to_searcher(queue, _searcher_handler)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observe_supervisor.py", line 111, in dispatch_to_searcher
+    searcher_handler(item)
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 47, in _searcher_handler
+    observe_log_store.insert_result(
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observe_log.py", line 230, in insert_result
+    item.source_domain,
+    ^^^^^^^^^^^^^^^^^^
+AttributeError: 'ObserveStackItem' object has no attribute 'source_domain'

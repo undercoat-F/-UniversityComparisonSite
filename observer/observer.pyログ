@@ -1,0 +1,37 @@
+[OBSERVE_SEARCHER] source=https://note.com/chisyukangakusei/n/na0f368d97aef universities=0 hits=10 roots=8 course_like=True depth=1 dupes=0
+[OBSERVE_SEARCHER] errors=sitemap_fetch_failed url=https://apps.apple.com/sitemap.xml: HTTPError: 404 Client Error: Not Found for url: https://apps.apple.com/sitemap.xml; sitemap_fetch_failed url=https://note.com/sitemap.xml: HTTPError: 404 Client Error: Not Found for url: https://note.com/sitemap.xml
+[OBSERVE_SEARCHER] source=https://www.mext.go.jp/a_menu/koutou/suuri_datascience_ai/mext_00005.html universities=0 hits=8 roots=1 course_like=True depth=1 dupes=0
+[OBSERVE_SEARCHER] errors=sitemap_fetch_failed url=https://www.mext.go.jp/sitemap.xml: HTTPError: 404 Client Error: Not Found for url: https://www.mext.go.jp/sitemap.xml
+[OBSERVE_SEARCHER] source=https://www.cicic.ca/869/resultats.canada?search= universities=12 hits=108 roots=38 course_like=True depth=1 dupes=0
+[OBSERVE_SEARCHER] errors=probe_status_error url=https://wagner.edu/art/: Client error '403 Forbidden' for url 'https://wagner.edu/art/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403; probe_status_error url=https://www.brooklyn.edu/svmpa/: Client error '403 Forbidden' for url 'https://www.brooklyn.edu/svmpa/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403; sitemap_fetch_failed url=https://www.liu.edu/sitemap.xml: HTTPError: 404 Client Error: Not Found for url: https://www.liu.edu/sitemap.xml; internal_probe_status_error url=https://www.liu.edu/post/academics/.collapseOne: Client error '404 Not Found' for url 'https://www.liu.edu/post/academics/.collapseOne'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+[OBSERVE_SEARCHER] source=https://www.cicic.ca/869/results.canada?search= universities=12 hits=108 roots=38 course_like=True depth=1 dupes=0
+[OBSERVE_SEARCHER] errors=probe_status_error url=https://www.cia.edu/: Redirect response '307 Temporary Redirect' for url 'https://www.cia.edu/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/307; probe_status_error url=https://www.brooklyn.edu/svmpa/: Client error '403 Forbidden' for url 'https://www.brooklyn.edu/svmpa/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403; probe_status_error url=https://wagner.edu/art/: Client error '403 Forbidden' for url 'https://wagner.edu/art/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403; sitemap_fetch_failed url=https://www.liu.edu/sitemap.xml: HTTPError: 404 Client Error: Not Found for url: https://www.liu.edu/sitemap.xml; internal_probe_status_error url=https://www.liu.edu/post/academics/.collapseOne: Client error '404 Not Found' for url 'https://www.liu.edu/post/academics/.collapseOne'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+upsert エラー: relation "seed_urls" does not exist
+LINE 2:                     INSERT INTO seed_urls (country, domain, ...
+                                        ^
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 89, in <module>
+    main()
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 72, in main
+    summary = run_observer_pipeline(
+              ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 36, in run_observer_pipeline
+    added_targets = add_seed_targets(transformed_items, ensure_schema=ensure_schema)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\seed_adder.py", line 29, in add_seed_targets
+    db_module.upsert_targets(targets)
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\ETL\init_seed_db.py", line 85, in upsert_targets
+    cursor.execute(
+psycopg2.errors.UndefinedTable: relation "seed_urls" does not exist
+LINE 2:                     INSERT INTO seed_urls (country, domain, ...
+ーーーーーーーーーーーー

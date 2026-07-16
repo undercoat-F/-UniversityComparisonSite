@@ -94,6 +94,34 @@ Seed投入
 →init_seed_db.pyのupsert_targets()がそのまま使えるらしい。引数は変える必要がある。
 init_seed_db.py:11 の infer_country() はTLDベースの簡易判定です。新しく発見した大学URLが .com や .org の場合 "unknown" になります。seed_transformer 側で検索API結果から国情報を付与しておき、seed_adder に渡す設計にしておく方が良いです。
 
+６．**seed_observe_logs**
+（observer 実行結果を永続化するログ。デバッグ時に一時出力ではなく、あとから SQL で追えるようにする）
+
+**run テーブル**
+- `id`: 実行ID
+- `external_run_id`: 呼び出し側から渡された observe run id
+- `source_count`: 対象URL数
+- `observed_count`: supervisor が処理した件数
+- `queued_count`: queue に積まれた件数
+- `dispatched_count`: searcher に渡した件数
+- `transformed_count`: transformer 相当で結果化した件数
+- `added_targets_count`: seed_urls へ投入した件数
+- `error_count`: supervisor 側のエラー件数
+- `status`: `running` / `completed` / `failed`
+- `started_at`, `finished_at`: 実行時刻
+
+**result テーブル**
+- `run_id`: run テーブルへの外部キー
+- `source_url`, `source_domain`: 元ページの識別子
+- `source_page_type`, `page_flags`: observer 側のページ種別と判定結果
+- `candidate_lines`, `request_log_count`: university 名抽出と監視ログの数
+- `university_names`: observer が拾った大学名
+- `hit_count`, `hits`: 検索APIの結果数と内容
+- `root_seed_urls`, `detailed_seed_urls`: transformer に渡す前の seed 候補
+- `course_list_found`, `recommended_depth`, `duplicate_root_urls`: 深さ判定に必要な情報
+- `errors`, `error_count`: searcher のエラー内容
+- `api_type`, `first_search_count`, `internal_link_extracted_count`, `fallback_executed`, `api_usage_count`: searcher の実行統計
+
 
 １，２　同期
 ３　非同期
@@ -210,3 +238,23 @@ API制限があるなら、無条件再検索は避けて、次の条件でだ�
 それでも弱い場合のみ第2段階検索として site:公式ドメイン + courses/programmes を1回だけ実行
 最終的に course 一覧が見つかれば depth 1-2、見つからなければ depth 3
 この設計だと、あなたの責務定義にぴったり一致します。
+
+-----
+次やる事
+
+１．引数や実行環境
+URL未指定かつ supervisor 側の固定URLが空だと、件数 0 で終了（エラーではなく空実行）
+２．検索API関連
+APIキー未設定時は searcher 側で探索スキップ系のエラー情報が内部に積まれる
+３．DB関連
+DB接続情報不足、接続失敗、権限不足などで add 時に例外
+４．通信関連
+監視元URLや探索先へのタイムアウト・HTTPエラー
+つまり、形式として何が返るかは確定済みで、実際のエラー内容は入力URL・環境変数・外部通信状態で決まる、という状態です。
+５．git上の.envをいれてしまった部分の削除
+削除方法を調べて、載ってない状態で公開する必要がある
+
+-----
+observerログ設計意図
+1テーブルではなく、実行のまとまりを追う run テーブルと、各ソースURLの結果を残す item テーブルの2段にすると、あとで「どの入力で何が起きて 0 件になったか」を追えます。
+

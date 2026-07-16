@@ -10,7 +10,7 @@ except Exception:  # pragma: no cover
     psycopg2 = None
 from dataclass.dataclass import SearchRunLogRecord
 
-
+#不明　おそらくログやデータベースの操作に関するクラスや関数の設定を環境変数で設定するための関数
 class SearchLogStore:
     def __init__(self, *, pg_dsn: str, schema_path: str) -> None:
         self.pg_dsn = (pg_dsn or "").strip()
