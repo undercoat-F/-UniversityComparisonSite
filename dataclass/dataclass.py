@@ -271,6 +271,7 @@ class SeedTransformInput(SearchResult):
     internal_link_extracted_count: int = 0
     fallback_executed: bool = False
     api_usage_count: int = 0
+    search_queries: list[str] = field(default_factory=list)
     run_id: Optional[int] = None
     source_stage: str = "seed_searcher"
 

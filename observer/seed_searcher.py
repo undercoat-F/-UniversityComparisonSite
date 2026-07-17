@@ -44,6 +44,18 @@ NEGATIVE_HINT_KEYWORDS = (
     "twitter",
 )
 
+BLOCKED_SEED_DOMAINS = {
+    "wikipedia.org",
+    "facebook.com",
+    "x.com",
+    "twitter.com",
+    "instagram.com",
+    "linkedin.com",
+    "youtube.com",
+    "zoominfo.com",
+    "tiktok.com",
+}
+
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -60,6 +72,17 @@ MAX_INTERNAL_LINKS_PER_DOMAIN = 16
 MAX_FALLBACK_QUERIES = 2
 MAX_SITEMAP_URLS_PER_DOMAIN = 30
 MAX_SITEMAP_RECURSION = 3
+
+
+def _is_valid_absolute_http_url(url: str) -> bool:
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if not parsed.netloc:
+        return False
+    if "*" in parsed.netloc:
+        return False
+    return True
 
 class BraveSearchAPI:
     """Brave Search API の薄いラッパー。"""
@@ -136,6 +159,16 @@ def _domain(url: str) -> str:
     return urlparse(url).netloc.lower()
 
 
+def _is_blocked_seed_domain(domain: str) -> bool:
+    d = (domain or "").strip().lower()
+    if not d:
+        return False
+    for blocked in BLOCKED_SEED_DOMAINS:
+        if d == blocked or d.endswith(f".{blocked}"):
+            return True
+    return False
+
+
 def _course_like_score(url: str, title: str, snippet: str, query: str) -> float:
     combined = f"{url} {title} {snippet}".lower()
     path = (urlparse(url).path or "").lower()
@@ -162,6 +195,74 @@ def _is_university_like_domain(domain: str) -> bool:
 
 def _tokens(text: str) -> list[str]:
     return [token for token in re.split(r"[^a-z0-9]+", text.lower()) if len(token) >= 3]
+
+
+JP_UNIVERSITY_PATTERN = re.compile(
+    r"([一-龠々ぁ-んァ-ンA-Za-z0-9・\-\s]{1,80}(?:大学|大学院|短期大学|高等専門学校|専門学校))"
+)
+EN_UNIVERSITY_PATTERN = re.compile(
+    r"([A-Za-z][A-Za-z0-9&'\.\-\s]{1,100}(?:University|College|Institute|School|Polytechnic|Academy))",
+    re.IGNORECASE,
+)
+NOISY_NAME_PREFIX_PATTERN = re.compile(
+    r"^(?:私は|僕は|ぼくは|私が|当方は|i am|i'm|i study at|i studied at|my university is)\s*",
+    re.IGNORECASE,
+)
+
+
+def _trim_name_prefix(name: str) -> str:
+    text = (name or "").strip()
+    # Sentence-like leading phrases degrade query quality; trim them first.
+    while True:
+        replaced = NOISY_NAME_PREFIX_PATTERN.sub("", text).strip()
+        if replaced == text:
+            return text
+        text = replaced
+
+
+def _extract_university_name(text: str) -> str:
+    cleaned = _trim_name_prefix(" ".join((text or "").strip().split()))
+    if not cleaned:
+        return ""
+
+    jp_match = JP_UNIVERSITY_PATTERN.search(cleaned)
+    if jp_match:
+        return _trim_name_prefix(jp_match.group(1)).strip(" ,.;:()[]{}\"'「」『』")
+
+    en_match = EN_UNIVERSITY_PATTERN.search(cleaned)
+    if en_match:
+        return _trim_name_prefix(en_match.group(1)).strip(" ,.;:()[]{}\"'「」『』")
+
+    return cleaned.strip(" ,.;:()[]{}\"'「」『』")
+
+
+def _normalize_university_names(names: list[str], candidate_lines: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    def _push(value: str) -> None:
+        v = _extract_university_name(value)
+        if not v or len(v) < 2:
+            return
+        key = v.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        normalized.append(v)
+
+    for name in names:
+        _push(name)
+
+    if normalized:
+        return normalized
+
+    # Fallback: try to recover names from candidate lines when extracted names are missing/noisy.
+    for line in candidate_lines[:20]:
+        extracted = _extract_university_name(line)
+        if extracted != line or JP_UNIVERSITY_PATTERN.search(extracted) or EN_UNIVERSITY_PATTERN.search(extracted):
+            _push(extracted)
+
+    return normalized
 
 
 def _domain_match_bonus(domain: str, university_names: list[str]) -> float:
@@ -245,7 +346,7 @@ def _extract_sitemap_directives(robots_text: str) -> list[str]:
         stripped = line.strip()
         if stripped.lower().startswith("sitemap:"):
             url = stripped.split(":", 1)[1].strip()
-            if url:
+            if url and _is_valid_absolute_http_url(url):
                 sitemap_urls.append(url)
     return sitemap_urls
 
@@ -341,6 +442,11 @@ def _probe_hit_sync(hit: SearchHit, errors: list[str]) -> SearchHit:
         content_type = (response.headers.get("content-type") or "").lower()
         html = response.text if "text/html" in content_type else ""
         return _apply_probe_to_hit(hit, html)
+    except requests.HTTPError as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status is not None and int(status) >= 500:
+            errors.append(f"probe_sync_server_error url={hit.url}: HTTP {status}")
+        return hit
     except requests.RequestException as exc:
         errors.append(f"probe_sync url={hit.url}: {type(exc).__name__}: {exc}")
         return hit
@@ -364,7 +470,9 @@ async def _probe_hit_async(
             errors.append(f"probe_httpx_failed url={hit.url}: {type(exc).__name__}: {exc}")
             return await asyncio.to_thread(_probe_hit_sync, hit, errors)
         except httpx.HTTPStatusError as exc:
-            errors.append(f"probe_status_error url={hit.url}: {exc}")
+            status = int(exc.response.status_code)
+            if status >= 500:
+                errors.append(f"probe_status_server_error url={hit.url}: HTTP {status}")
             return hit
 
 
@@ -398,6 +506,9 @@ def _probe_urls_sync(urls: list[str], errors: list[str]) -> list[SearchHit]:
                 is_course_like=base_score >= 4.0,
             )
             hits.append(_apply_probe_to_hit(base_hit, html))
+        except requests.HTTPError:
+            # 4xx は探索ノイズとして扱い、error_count を増やさない。
+            continue
         except requests.RequestException as exc:
             errors.append(f"internal_probe_sync url={url}: {type(exc).__name__}: {exc}")
     return hits
@@ -428,7 +539,8 @@ async def _probe_urls_async(urls: list[str], errors: list[str]) -> list[SearchHi
                 sync_hits = await asyncio.to_thread(_probe_urls_sync, [url], errors)
                 return sync_hits[0] if sync_hits else None
             except httpx.HTTPStatusError as exc:
-                errors.append(f"internal_probe_status_error url={url}: {exc}")
+                if int(exc.response.status_code) >= 500:
+                    errors.append(f"internal_probe_status_server_error url={url}: HTTP {exc.response.status_code}")
                 return None
 
     async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=10) as client:
@@ -437,7 +549,11 @@ async def _probe_urls_async(urls: list[str], errors: list[str]) -> list[SearchHi
 
 
 def _enrich_hits_with_probe(hits: list[SearchHit], errors: list[str]) -> list[SearchHit]:
-    top_hits = hits[:MAX_PROBE_URLS]
+    top_hits = [
+        hit
+        for hit in hits
+        if not _is_blocked_seed_domain(_domain(hit.url)) and _is_valid_absolute_http_url(hit.url)
+    ][:MAX_PROBE_URLS]
     if not top_hits:
         return hits
 
@@ -486,10 +602,18 @@ def _select_official_domains(hits: list[SearchHit], university_names: list[str])
         d = _domain(hit.url)
         if not d:
             continue
+        if _is_blocked_seed_domain(d):
+            continue
+        name_bonus = _domain_match_bonus(d, university_names)
+        university_like = _is_university_like_domain(d)
+        # 公式候補は「大学系TLD」または「大学名トークン一致」を満たすものに限定する。
+        if not university_like and name_bonus < 0.8:
+            continue
+
         score = hit.score
-        if _is_university_like_domain(d):
+        if university_like:
             score += 2.0
-        score += _domain_match_bonus(d, university_names)
+        score += name_bonus
         prev = domain_scores.get(d, float("-inf"))
         if score > prev:
             domain_scores[d] = score
@@ -527,11 +651,12 @@ def _build_domain_discovery_queries(request: SearchRequest) -> list[str]:
         n = name.strip()
         if not n:
             continue
-        queries.append(n)
+        queries.append(f"{n} 公式")
+        queries.append(f"{n} official")
         queries.append(f"{n} official site")
     # 候補が空なら source_domain を使った保険クエリを投げる
     if not queries and request.source_domain:
-        queries.append(request.source_domain)
+        queries.append(f"{request.source_domain} official")
     deduped: list[str] = []
     seen: set[str] = set()
     for q in queries:
@@ -562,18 +687,35 @@ def _build_course_fallback_queries(official_domains: set[str], request: SearchRe
 
 
 def build_search_request(item: ObserveStackItem) -> SearchRequest:
+    normalized_names = _normalize_university_names(
+        list(item.university_names),
+        list(item.page_analysis.candidate_lines),
+    )
     return SearchRequest(
         source_url=item.source_url,
         source_domain=_domain(item.source_url),
-        university_names=list(item.university_names),
+        university_names=normalized_names,
         content_type=item.page_analysis.content_type.value,
         candidate_lines=list(item.page_analysis.candidate_lines),
     )
 
 
-def _build_result(request: SearchRequest, hits: list[SearchHit], errors: list[str]) -> SearchResult:
+def _build_result(
+    request: SearchRequest,
+    hits: list[SearchHit],
+    errors: list[str],
+    official_domains: set[str] | None = None,
+) -> SearchResult:
+    official = set(official_domains or set())
+    allowed_hits = [
+        hit
+        for hit in hits
+        if not _is_blocked_seed_domain(_domain(hit.url))
+        and (not official or _domain(hit.url) in official)
+    ]
+
     root_candidates: list[str] = []
-    for hit in hits:
+    for hit in allowed_hits:
         root = _root_url(hit.url)
         if root and root not in root_candidates:
             root_candidates.append(root)
@@ -583,14 +725,14 @@ def _build_result(request: SearchRequest, hits: list[SearchHit], errors: list[st
 
     detailed_seed_urls = [
         hit.url
-        for hit in hits
+        for hit in allowed_hits
         if hit.is_course_like and _root_url(hit.url) not in duplicate_roots
     ]
 
-    course_list_found = any(hit.is_course_like for hit in hits)
+    course_list_found = any(hit.is_course_like for hit in allowed_hits)
     if course_list_found:
         recommended_depth = 1
-    elif hits:
+    elif allowed_hits:
         recommended_depth = 2
     else:
         recommended_depth = 3
@@ -621,6 +763,7 @@ def _to_transform_input(
     internal_link_extracted_count: int,
     fallback_executed: bool,
     api_usage_count: int,
+    search_queries: list[str],
     run_id: int | None,
     source_stage: str,
 ) -> SeedTransformInput:
@@ -640,6 +783,7 @@ def _to_transform_input(
         internal_link_extracted_count=internal_link_extracted_count,
         fallback_executed=fallback_executed,
         api_usage_count=api_usage_count,
+        search_queries=list(search_queries),
         run_id=run_id,
         source_stage=source_stage,
     )
@@ -650,6 +794,7 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
     client_api = api or BraveSearchAPI()
     queries = _build_domain_discovery_queries(request)
     api_usage_count = 0
+    api_queries_used: list[str] = []
     first_search_count = 0
     internal_link_extracted_count = 0
     fallback_executed = False
@@ -667,12 +812,14 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
             internal_link_extracted_count=internal_link_extracted_count,
             fallback_executed=fallback_executed,
             api_usage_count=api_usage_count,
+            search_queries=api_queries_used,
             run_id=item.observe_run_id,
             source_stage="seed_searcher",
         )
 
     for query in queries:
         try:
+            api_queries_used.append(query)
             api_usage_count += 1
             rows = client_api.search(query=query, num_results=8)
         except Exception as exc:  # noqa: BLE001
@@ -745,6 +892,7 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
         fallback_executed = bool(fallback_queries)
         for query in fallback_queries:
             try:
+                api_queries_used.append(query)
                 api_usage_count += 1
                 rows = client_api.search(query=query, num_results=6)
             except Exception as exc:  # noqa: BLE001
@@ -770,7 +918,7 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
         merged_hits = _enrich_hits_with_probe(merged_hits, errors)
 
     hits = merged_hits
-    result = _build_result(request, hits, errors)
+    result = _build_result(request, hits, errors, official_domains=official_domains)
 
     search_log_store = SearchLogStore.from_env()
     if search_log_store is not None:
@@ -801,6 +949,7 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
         internal_link_extracted_count=internal_link_extracted_count,
         fallback_executed=fallback_executed,
         api_usage_count=api_usage_count,
+        search_queries=api_queries_used,
         run_id=item.observe_run_id,
         source_stage="seed_searcher",
     )

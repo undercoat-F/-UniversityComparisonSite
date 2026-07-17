@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from dataclass.dataclass import SeedTransformInput
 from observer.observe_log import ObserveLogStore, ObserveRunLogRecord
 from observer.observe_supervisor import OBSERVE_SOURCE_URLS, dispatch_to_searcher, run_supervisor
-from observer.seed_adder import add_seed_targets
+from observer.seed_adder import promote_high_quality_targets_from_stage
 from observer.seed_searcher import handle_observe_item
 
 
@@ -17,6 +17,7 @@ class ObserverPipelineSummary:
 	dispatched_items: int
 	transformed_items: int
 	added_targets: int
+	promoted_targets: int
 	observe_errors: int
 
 
@@ -24,7 +25,9 @@ def run_observer_pipeline(
 	*,
 	source_urls: list[str] | None = None,
 	observe_run_id: int | None = None,
-	ensure_schema: bool = False,
+	promote_min_hit_count: int = 8,
+	promote_max_error_count: int = 3,
+	promote_max_depth: int = 2,
 ) -> ObserverPipelineSummary:
 	source_count = len(source_urls or OBSERVE_SOURCE_URLS)
 	observe_log_store = ObserveLogStore.from_env()
@@ -52,6 +55,7 @@ def run_observer_pipeline(
 	transformed_items: list[SeedTransformInput] = []
 	dispatched_items = 0
 	added_targets = 0
+	promoted_targets = 0
 	pipeline_error: Exception | None = None
 	pipeline_traceback = None
 
@@ -75,7 +79,28 @@ def run_observer_pipeline(
 					print(f"[OBSERVE_LOG_WARN] insert_result failed: {type(exc).__name__}: {exc}")
 
 		dispatched_items = dispatch_to_searcher(queue, _searcher_handler)
-		added_targets = add_seed_targets(transformed_items, ensure_schema=ensure_schema)
+		if run_log_id is None:
+			raise RuntimeError(
+				"Observe log run_id is unavailable. Quality-gated promotion requires OBSERVE_LOG_* DSN configuration."
+			)
+
+		promotion = promote_high_quality_targets_from_stage(
+			observe_log_run_id=run_log_id,
+			external_run_id=observe_run_id,
+			min_hit_count=promote_min_hit_count,
+			max_error_count=promote_max_error_count,
+			max_recommended_depth=promote_max_depth,
+		)
+		promoted_targets = promotion.promoted_targets
+		added_targets = promoted_targets
+		print(
+			"[SEED_PROMOTION] "
+			f"stage_source={promotion.stage_source} "
+			f"target_source={promotion.target_source} "
+			f"scanned={promotion.scanned_rows} "
+			f"accepted={promotion.accepted_rows} "
+			f"promoted={promotion.promoted_targets}"
+		)
 	except Exception as exc:  # noqa: BLE001
 		pipeline_error = exc
 		pipeline_traceback = exc.__traceback__
@@ -111,6 +136,7 @@ def run_observer_pipeline(
 		dispatched_items=dispatched_items,
 		transformed_items=len(transformed_items),
 		added_targets=added_targets,
+		promoted_targets=promoted_targets,
 		observe_errors=sum(r.error_count for r in observe_results),
 	)
 
@@ -130,9 +156,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 		help="Optional observe run id to include in downstream logs.",
 	)
 	parser.add_argument(
-		"--init-schema",
-		action="store_true",
-		help="Initialize seed DB schema before inserting targets.",
+		"--promote-min-hit-count",
+		type=int,
+		default=8,
+		help="Minimum hit_count required for promotion.",
+	)
+	parser.add_argument(
+		"--promote-max-error-count",
+		type=int,
+		default=3,
+		help="Maximum error_count allowed for promotion.",
+	)
+	parser.add_argument(
+		"--promote-max-depth",
+		type=int,
+		default=2,
+		help="Maximum recommended_depth allowed for promotion.",
 	)
 	return parser
 
@@ -142,7 +181,9 @@ def main() -> None:
 	summary = run_observer_pipeline(
 		source_urls=args.url,
 		observe_run_id=args.observe_run_id,
-		ensure_schema=args.init_schema,
+		promote_min_hit_count=args.promote_min_hit_count,
+		promote_max_error_count=args.promote_max_error_count,
+		promote_max_depth=args.promote_max_depth,
 	)
 	print(
 		"[OBSERVER_PIPELINE] "
@@ -151,9 +192,11 @@ def main() -> None:
 		f"dispatched={summary.dispatched_items} "
 		f"transformed={summary.transformed_items} "
 		f"added_targets={summary.added_targets} "
+		f"promoted_targets={summary.promoted_targets} "
 		f"observe_errors={summary.observe_errors}"
 	)
 
 
 if __name__ == "__main__":
+	print("[OBSERVER_PIPELINE] Starting observer pipeline...")
 	main()

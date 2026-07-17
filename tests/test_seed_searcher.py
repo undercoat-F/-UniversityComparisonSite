@@ -54,11 +54,116 @@ async def _passthrough_probe_hits(hits, errors):
 
 
 class TestSeedSearcher(unittest.TestCase):
+    def test_query_uses_normalized_university_name_from_sentence(self):
+        item = _build_item("私は東京大学に行って研究をしています")
+
+        call_queries = []
+
+        def fake_search(query: str, num_results: int = 10):
+            call_queries.append(query)
+            if query == "東京大学 公式":
+                return [
+                    {
+                        "url": "https://www.u-tokyo.ac.jp/",
+                        "title": "東京大学",
+                        "snippet": "公式サイト",
+                    }
+                ]
+            return []
+
+        with (
+            patch.dict("os.environ", {"BRAVE_API_KEY": "dummy-key"}, clear=False),
+            patch("observer.seed_searcher.BraveSearchAPI.search", side_effect=fake_search),
+            patch("observer.seed_searcher._existing_root_urls", return_value=set()),
+            patch("observer.seed_searcher.SearchLogStore.from_env", return_value=None),
+            patch("observer.seed_searcher._probe_hits_async", new=_passthrough_probe_hits),
+            patch(
+                "observer.seed_searcher.requests.get",
+                return_value=_DummyResponse(text="<html><body>ok</body></html>"),
+            ),
+        ):
+            result = seed_searcher.search_seeds(item)
+
+        self.assertIn("東京大学 公式", call_queries)
+        self.assertTrue(any("u-tokyo.ac.jp" in u for u in result.root_seed_urls))
+
+    def test_non_official_domains_are_excluded_from_seed_urls(self):
+        item = _build_item("Official University")
+
+        def fake_search(query: str, num_results: int = 10):
+            if query in {"Official University 公式", "Official University official"}:
+                return [
+                    {
+                        "url": "https://www.official.ac.uk/",
+                        "title": "Official University",
+                        "snippet": "Official site",
+                    },
+                    {
+                        "url": "https://www.traininginstitute.org/courses/official-university",
+                        "title": "Official University courses",
+                        "snippet": "course list",
+                    },
+                ]
+            return []
+
+        with (
+            patch.dict("os.environ", {"BRAVE_API_KEY": "dummy-key"}, clear=False),
+            patch("observer.seed_searcher.BraveSearchAPI.search", side_effect=fake_search),
+            patch("observer.seed_searcher._existing_root_urls", return_value=set()),
+            patch("observer.seed_searcher.SearchLogStore.from_env", return_value=None),
+            patch("observer.seed_searcher._probe_hits_async", new=_passthrough_probe_hits),
+            patch(
+                "observer.seed_searcher.requests.get",
+                return_value=_DummyResponse(text="<html><body>ok</body></html>"),
+            ),
+        ):
+            result = seed_searcher.search_seeds(item)
+
+        self.assertTrue(any("official.ac.uk" in u for u in result.root_seed_urls))
+        self.assertFalse(any("traininginstitute.org" in u for u in result.root_seed_urls))
+        self.assertFalse(any("traininginstitute.org" in u for u in result.detailed_seed_urls))
+
+    def test_blocked_noise_domains_are_not_added_to_seed_urls(self):
+        item = _build_item("Noise University")
+
+        def fake_search(query: str, num_results: int = 10):
+            if query in {"Noise University 公式", "Noise University official"}:
+                return [
+                    {
+                        "url": "https://www.noise.ac.uk/",
+                        "title": "Noise University Official Site",
+                        "snippet": "Official",
+                    },
+                    {
+                        "url": "https://www.zoominfo.com/c/noise-university-courses/123",
+                        "title": "Noise University Courses",
+                        "snippet": "courses",
+                    },
+                ]
+            return []
+
+        with (
+            patch.dict("os.environ", {"BRAVE_API_KEY": "dummy-key"}, clear=False),
+            patch("observer.seed_searcher.BraveSearchAPI.search", side_effect=fake_search),
+            patch("observer.seed_searcher._existing_root_urls", return_value=set()),
+            patch("observer.seed_searcher.SearchLogStore.from_env", return_value=None),
+            patch("observer.seed_searcher._probe_hits_async", new=_passthrough_probe_hits),
+            patch(
+                "observer.seed_searcher.requests.get",
+                return_value=_DummyResponse(text="<html><body>ok</body></html>"),
+            ),
+        ):
+            result = seed_searcher.search_seeds(item)
+
+        self.assertTrue(any("noise.ac.uk" in u for u in result.root_seed_urls))
+        self.assertFalse(any("zoominfo.com" in u for u in result.root_seed_urls))
+        self.assertFalse(any("zoominfo.com" in u for u in result.detailed_seed_urls))
+
     def test_sitemap_discovery_adds_course_candidates(self):
         item = _build_item("Sitemap University")
 
         def fake_search(query: str, num_results: int = 10):
-            if query == "Sitemap University":
+            if query in {"Sitemap University 公式", "Sitemap University official"}:
                 return [
                     {
                         "url": "https://www.sitemap.ac.uk/",
@@ -100,7 +205,7 @@ class TestSeedSearcher(unittest.TestCase):
         item = _build_item("Test University")
 
         def fake_search(query: str, num_results: int = 10):
-            if query == "Test University":
+            if query in {"Test University 公式", "Test University official"}:
                 return [
                     {
                         "url": "https://www.testuniversity.ac.uk/",
@@ -140,7 +245,7 @@ class TestSeedSearcher(unittest.TestCase):
         ):
             result = seed_searcher.search_seeds(item)
 
-        self.assertGreaterEqual(m_search.call_count, 2)  # 第1検索は大学名 + official site
+        self.assertGreaterEqual(m_search.call_count, 2)  # 第1検索は大学名 + 公式/official
         self.assertTrue(result.course_list_found)
         self.assertEqual(result.recommended_depth, 1)
         self.assertTrue(any("/courses" in url for url in result.detailed_seed_urls))
@@ -152,7 +257,7 @@ class TestSeedSearcher(unittest.TestCase):
 
         def fake_search(query: str, num_results: int = 10):
             call_queries.append(query)
-            if query == "Fallback University":
+            if query in {"Fallback University 公式", "Fallback University official"}:
                 return [
                     {
                         "url": "https://www.fallback.ac.uk/",

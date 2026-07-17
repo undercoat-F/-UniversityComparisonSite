@@ -46,8 +46,12 @@ CREATE TABLE IF NOT EXISTS seed_observe_results (
   internal_link_extracted_count INTEGER NOT NULL DEFAULT 0 CHECK(internal_link_extracted_count >= 0),
   fallback_executed BOOLEAN NOT NULL DEFAULT FALSE,
   api_usage_count INTEGER NOT NULL DEFAULT 0 CHECK(api_usage_count >= 0),
+  search_queries JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE seed_observe_results
+  ADD COLUMN IF NOT EXISTS search_queries JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_seed_observe_results_run_id
   ON seed_observe_results(run_id);

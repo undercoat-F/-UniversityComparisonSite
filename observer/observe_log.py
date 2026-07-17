@@ -58,7 +58,7 @@ class ObserveLogStore:
         if not pg_dsn:
             return None
 
-        schema_path = os.getenv("OBSERVE_LOG_SCHEMA_PATH", os.path.join("ETL", "seed_observe_log_schema.sql"))
+        schema_path = os.getenv("OBSERVE_LOG_SCHEMA_PATH", os.path.join("observer", "seed_observe_log_schema.sql"))
         return cls(pg_dsn=pg_dsn, schema_path=schema_path)
 
     def _connect(self):
@@ -216,10 +216,11 @@ class ObserveLogStore:
                     first_search_count,
                     internal_link_extracted_count,
                     fallback_executed,
-                    api_usage_count
+                    api_usage_count,
+                    search_queries
                 )
                 VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -259,6 +260,7 @@ class ObserveLogStore:
                     int(result.internal_link_extracted_count),
                     bool(result.fallback_executed),
                     int(result.api_usage_count),
+                    _json_value(list(result.search_queries)),
                 ),
             )
             conn.commit()

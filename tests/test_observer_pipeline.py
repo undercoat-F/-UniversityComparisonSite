@@ -9,6 +9,7 @@ import os
 import sys
 import types
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -163,12 +164,22 @@ class TestObserverPipeline(unittest.TestCase):
             patch("observer.observer.ObserveLogStore.from_env", return_value=log_store),
             patch("observer.observer.run_supervisor", return_value=([ObserveRunResult(url=item.source_url, added_log_count=1, error_count=0, stacked_for_searcher=True)], queue)),
             patch("observer.observer.handle_observe_item", return_value=transformed),
-            patch("observer.observer.add_seed_targets", return_value=1),
+            patch(
+                "observer.observer.promote_high_quality_targets_from_stage",
+                return_value=SimpleNamespace(
+                    scanned_rows=1,
+                    accepted_rows=1,
+                    promoted_targets=1,
+                    stage_source="OBSERVER_DSN",
+                    target_source="ETL_DSN",
+                ),
+            ),
         ):
             summary = run_observer_pipeline(source_urls=[item.source_url], observe_run_id=7)
 
         self.assertEqual(summary.observed_urls, 1)
         self.assertEqual(summary.added_targets, 1)
+        self.assertEqual(summary.promoted_targets, 1)
         self.assertEqual(len(log_store.created), 1)
         self.assertEqual(len(log_store.inserted), 1)
         self.assertEqual(len(log_store.finished), 1)
@@ -222,11 +233,21 @@ class TestObserverPipeline(unittest.TestCase):
             patch("observer.observer.ObserveLogStore.from_env", return_value=log_store),
             patch("observer.observer.run_supervisor", return_value=([ObserveRunResult(url=item.source_url, added_log_count=1, error_count=0, stacked_for_searcher=True)], queue)),
             patch("observer.observer.handle_observe_item", return_value=transformed),
-            patch("observer.observer.add_seed_targets", return_value=1),
+            patch(
+                "observer.observer.promote_high_quality_targets_from_stage",
+                return_value=SimpleNamespace(
+                    scanned_rows=1,
+                    accepted_rows=1,
+                    promoted_targets=1,
+                    stage_source="OBSERVER_DSN",
+                    target_source="ETL_DSN",
+                ),
+            ),
         ):
             summary = run_observer_pipeline(source_urls=[item.source_url], observe_run_id=7)
 
         self.assertEqual(summary.added_targets, 1)
+        self.assertEqual(summary.promoted_targets, 1)
         self.assertEqual(len(log_store.finished), 1)
         self.assertTrue(log_store.closed)
 

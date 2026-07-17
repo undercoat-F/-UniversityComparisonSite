@@ -20,3 +20,43 @@ Traceback (most recent call last):
     item.source_domain,
     ^^^^^^^^^^^^^^^^^^
 AttributeError: 'ObserveStackItem' object has no attribute 'source_domain'
+
+＿＿＿＿＿
+
+[OBSERVE_SEARCHER] source=https://note.com/chisyukangakusei/n/na0f368d97aef universities=0 hits=10 roots=8 course_like=True depth=1 dupes=0
+[OBSERVE_SEARCHER] errors=sitemap_fetch_failed url=https://apps.apple.com/sitemap.xml: HTTPError: 404 Client Error: Not Found for url: https://apps.apple.com/sitemap.xml; sitemap_fetch_failed url=https://note.com/sitemap.xml: HTTPError: 404 Client Error: Not Found for url: https://note.com/sitemap.xml
+Traceback (most recent call last):
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observe_log.py", line 193, in insert_result
+    cur.execute(
+psycopg2.OperationalError: SSL connection has been closed unexpectedly
+
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 127, in <module>
+    main()
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 110, in main
+    summary = run_observer_pipeline(
+              ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 56, in run_observer_pipeline
+    dispatched_items = dispatch_to_searcher(queue, _searcher_handler)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observe_supervisor.py", line 111, in dispatch_to_searcher
+    searcher_handler(item)
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observer.py", line 47, in _searcher_handler
+    observe_log_store.insert_result(
+  File "C:\Users\81701\Pythonプロジェクト\学位ソート検索サイト\observer\observe_log.py", line 266, in insert_result
+    conn.rollback()
+psycopg2.InterfaceError: connection already closed
+_____
+7/18
+
+[OBSERVER_PIPELINE] Starting observer pipeline...
+[OBSERVE_SEARCHER] source=https://www.mext.go.jp/a_menu/koutou/suuri_datascience_ai/mext_00005.html universities=0 hits=8 roots=0 course_like=True depth=1 dupes=1
+[OBSERVE_SEARCHER] source=https://www.cicic.ca/869/resultats.canada?search= universities=10 hits=124 roots=0 course_like=True depth=1 dupes=4
+[OBSERVE_SEARCHER] source=https://www.cicic.ca/869/results.canada?search= universities=10 hits=124 roots=0 course_like=True depth=1 dupes=4
+[SEED_PROMOTION] stage_source=OBSERVER_DSN target_source=ETL_DSN scanned=3 accepted=2 promoted=2
+[OBSERVER_PIPELINE] observed=3 queued=3 dispatched=3 transformed=3 added_targets=2 promoted_targets=2 observe_errors=0
