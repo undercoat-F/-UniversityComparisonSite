@@ -7,25 +7,51 @@
 
 -- 参考: 検索APIに渡されたクエリ文字列を確認するSQL
 -- 最新 run の query 一覧
--- SELECT
---   r.run_id,
---   r.id AS result_id,
---   q.query_text,
---   r.created_at
--- FROM seed_observe_results r
--- CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(r.search_queries, '[]'::jsonb)) AS q(query_text)
--- WHERE r.run_id = (SELECT id FROM seed_observe_runs ORDER BY id DESC LIMIT 1)
--- ORDER BY r.id DESC, q.query_text;
+SELECT
+  r.run_id,
+  r.id AS result_id,
+  q.query_text,
+  r.created_at
+FROM seed_observe_results r
+CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(r.search_queries, '[]'::jsonb)) AS q(query_text)
+WHERE r.run_id = (SELECT id FROM seed_observe_runs ORDER BY id DESC LIMIT 1)
+ORDER BY r.id DESC, q.query_text;
 --
 -- run ごとの query 使用回数
--- SELECT
---   r.run_id,
---   q.query_text,
---   count(*) AS used_count
--- FROM seed_observe_results r
--- CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(r.search_queries, '[]'::jsonb)) AS q(query_text)
--- GROUP BY r.run_id, q.query_text
--- ORDER BY r.run_id DESC, used_count DESC, q.query_text;
+SELECT
+  r.run_id,
+  q.query_text,
+  count(*) AS used_count
+FROM seed_observe_results r
+CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(r.search_queries, '[]'::jsonb)) AS q(query_text)
+GROUP BY r.run_id, q.query_text
+ORDER BY r.run_id DESC, used_count DESC, q.query_text;
+
+-- run ごとの検索クエリ集計（実行単位の確認用）
+SELECT
+  r.run_id,
+  count(*) AS result_count,
+  sum(jsonb_array_length(coalesce(r.search_queries, '[]'::jsonb))) AS total_query_count,
+  count(DISTINCT q.query_text) AS distinct_query_count,
+  min(r.created_at) AS oldest_created_at,
+  max(r.created_at) AS latest_created_at
+FROM seed_observe_results r
+LEFT JOIN LATERAL jsonb_array_elements_text(coalesce(r.search_queries, '[]'::jsonb)) AS q(query_text)
+  ON true
+GROUP BY r.run_id
+ORDER BY r.run_id DESC;
+
+-- 最新 run の検索クエリ一覧（上位確認用）
+SELECT
+  r.id AS result_id,
+  q.query_text,
+  r.source_domain,
+  r.source_url,
+  r.created_at
+FROM seed_observe_results r
+CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(r.search_queries, '[]'::jsonb)) AS q(query_text)
+WHERE r.run_id = (SELECT id FROM seed_observe_runs ORDER BY id DESC LIMIT 1)
+ORDER BY r.id DESC, q.query_text;
 
 -- =====================================================================
 -- 1) ノイズ候補URL一覧（review用）
@@ -241,3 +267,30 @@ FROM scored
 WHERE noise_score >= 2
 GROUP BY run_id, noise_reasons
 ORDER BY run_id DESC, candidate_count DESC, noise_reasons;
+-------------
+--run ごとの検索クエリ集計
+
+SELECT
+r.run_id,
+count(*) AS result_count,
+sum(coalesce(jsonb_array_length(r.search_queries), 0)) AS total_query_count,
+count(DISTINCT q.query_text) AS distinct_query_count,
+min(r.created_at) AS oldest_created_at,
+max(r.created_at) AS latest_created_at
+FROM seed_observe_results r
+LEFT JOIN LATERAL jsonb_array_elements_text(coalesce(r.search_queries, '[]'::jsonb)) AS q(query_text)
+ON true
+GROUP BY r.run_id
+ORDER BY r.run_id DESC;
+
+------------- 
+--run ごとの query 使用回数
+
+SELECT
+r.run_id,
+q.query_text,
+count(*) AS used_count
+FROM seed_observe_results r
+CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(r.search_queries, '[]'::jsonb)) AS q(query_text)
+GROUP BY r.run_id, q.query_text
+ORDER BY r.run_id DESC, used_count DESC, q.query_text;

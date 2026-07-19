@@ -7,16 +7,55 @@ Unit tests for observer.seed_observer.extract_universitynamelist.
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dataclass.dataclass import ContentType, PageAnalysis
-from observer.seed_observer import extract_universitynamelist
+from observer.seed_observer import (
+    extract_candidate_lines,
+    extract_universitynamelist,
+    extract_pagination_actions,
+    observe_url,
+)
 
 
 def make_page(candidate_lines: list[str]) -> PageAnalysis:
     page = PageAnalysis()
     page.content_type = ContentType.HTML
     page.candidate_lines = candidate_lines
+    return page
+
+
+class _DummyResponse:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.content = text.encode("utf-8")
+        self.status_code = 200
+        self.url = "https://example.org"
+        self.headers = {"Content-Type": "text/html; charset=utf-8"}
+
+
+class _FakeSession:
+    def __init__(self, initial_html: str, next_html: str) -> None:
+        self.initial_html = initial_html
+        self.next_html = next_html
+        self.headers = {}
+
+    def get(self, url, headers=None, timeout=None, allow_redirects=True):
+        resp = _DummyResponse(self.initial_html)
+        resp.url = url
+        return resp
+
+    def post(self, url, data=None, headers=None, timeout=None, allow_redirects=True):
+        resp = _DummyResponse(self.next_html)
+        resp.url = url
+        return resp
+
+
+def make_html_page(html: str) -> PageAnalysis:
+    page = PageAnalysis()
+    page.content_type = ContentType.HTML
+    page.response = _DummyResponse(html)
     return page
 
 
@@ -111,6 +150,109 @@ class TestExtractUniversityNamelistMixed(unittest.TestCase):
         page = make_page(["早稲田大学"])
         result = extract_universitynamelist(page)
         self.assertEqual(result, page.extracted_universitynamelist)
+
+
+class TestExtractCandidateLinesHTML(unittest.TestCase):
+        def test_extracts_from_td_and_a_tags(self):
+                page = make_html_page(
+                        """
+                        <html><body>
+                            <table>
+                                <tbody>
+                                    <tr><td><a href='/uni/tokyo'>東京大学</a></td><td>国立</td></tr>
+                                    <tr><td><a href='/uni/kyoto'>京都大学</a></td><td>国立</td></tr>
+                                </tbody>
+                            </table>
+                        </body></html>
+                        """
+                )
+
+                lines = extract_candidate_lines(page)
+
+                self.assertTrue(any("東京大学" in line for line in lines))
+                self.assertTrue(any("京都大学" in line for line in lines))
+
+        def test_extracts_from_li_and_option_tags(self):
+                page = make_html_page(
+                        """
+                        <html><body>
+                            <ul>
+                                <li><a href='/uni/waseda'>早稲田大学</a></li>
+                                <li><a href='/uni/keio'>慶應義塾大学</a></li>
+                            </ul>
+                            <select>
+                                <option value='utokyo'>東京大学</option>
+                                <option value='kyoto'>京都大学</option>
+                            </select>
+                        </body></html>
+                        """
+                )
+
+                lines = extract_candidate_lines(page)
+
+                self.assertTrue(any("早稲田大学" in line for line in lines))
+                self.assertTrue(any("慶應義塾大学" in line for line in lines))
+                self.assertTrue(any("東京大学" in line for line in lines))
+                self.assertTrue(any("京都大学" in line for line in lines))
+
+
+class TestPaginationExtractionAndObserve(unittest.TestCase):
+        def test_extract_pagination_actions_from_button_postback(self):
+                html = """
+                <html><body>
+                    <button onclick="javascript:__doPostBack('ctl00$Main$EducationDirectory$pager','2')">次へ</button>
+                </body></html>
+                """
+
+                actions = extract_pagination_actions(html, "https://example.org/results")
+
+                self.assertTrue(any(action["method"] == "postback" for action in actions))
+                self.assertTrue(any(action["argument"] == "2" for action in actions))
+
+        def test_observe_url_collects_followup_page_candidates(self):
+                initial_html = """
+                <html><body>
+                    <table>
+                        <tbody>
+                            <tr><td><a href='/school/page1'>AAA College</a></td></tr>
+                        </tbody>
+                    </table>
+                    <button onclick="javascript:__doPostBack('ctl00$Main$EducationDirectory$pager','2')">次へ</button>
+                </body></html>
+                """
+                next_html = """
+                <html><body>
+                    <table>
+                        <tbody>
+                            <tr><td><a href='/school/page2'>BBB College</a></td></tr>
+                        </tbody>
+                    </table>
+                </body></html>
+                """
+
+                def fake_get(url, headers=None, timeout=None, allow_redirects=True):
+                        if url.endswith("/robots.txt"):
+                                resp = _DummyResponse("")
+                                resp.status_code = 200
+                                resp.text = ""
+                                return resp
+                        resp = _DummyResponse(initial_html)
+                        resp.url = url
+                        return resp
+
+                with (
+                        patch("observer.seed_observer.get_crawl_delay", return_value=0.0),
+                        patch("observer.seed_observer.time.sleep", return_value=None),
+                        patch("observer.seed_observer.requests.get", side_effect=fake_get),
+                        patch("observer.seed_observer.requests.Session", return_value=_FakeSession(initial_html, next_html)),
+                ):
+                        page = observe_url("https://example.org/results")
+
+                self.assertIsNotNone(page)
+                self.assertTrue(any("AAA College" in line for line in page.candidate_lines))
+                self.assertTrue(any("BBB College" in line for line in page.candidate_lines))
+                self.assertTrue(any("AAA College" in name for name in page.extracted_universitynamelist))
+                self.assertTrue(any("BBB College" in name for name in page.extracted_universitynamelist))
 
 
 if __name__ == "__main__":

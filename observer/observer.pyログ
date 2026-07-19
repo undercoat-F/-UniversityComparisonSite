@@ -35,3 +35,5 @@ Traceback (most recent call last):
 psycopg2.errors.UndefinedTable: relation "seed_urls" does not exist
 LINE 2:                     INSERT INTO seed_urls (country, domain, ...
 ーーーーーーーーーーーー
+
+[{"duplicate_root_urls":["https://samfoxschool.washu.edu","https://www.fresnocitycollege.edu"]}]

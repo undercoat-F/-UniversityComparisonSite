@@ -2,7 +2,7 @@ from dataclass.dataclass import SeedDiscovery
 import time
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 import re
 from urllib.robotparser import RobotFileParser
 from dataclass.dataclass import PageAnalysis,ContentType
@@ -24,6 +24,20 @@ DEFAULT_HEADERS = {
 }
 
 DEFAULT_TIMEOUT = 1.0  # seconds
+MAX_PAGINATION_PAGES = 5
+
+PAGINATION_KEYWORDS = (
+    "next",
+    "next page",
+    "次",
+    "次へ",
+    ">",
+    ">>",
+    "›",
+    "»",
+    "older",
+    "more",
+)
 
 """
 ページ取得
@@ -152,6 +166,120 @@ def pagetype_analyze(url: str, html: str) -> PageAnalysis:
 
     return ThisPage
 
+
+def _looks_like_pagination_control(text: str, attrs_text: str = "") -> bool:
+    combined = f"{text or ''} {attrs_text or ''}".lower().strip()
+    if not combined:
+        return False
+    return any(keyword in combined for keyword in PAGINATION_KEYWORDS)
+
+
+def _parse_do_postback(js_value: str) -> tuple[str, str] | None:
+    if not js_value:
+        return None
+    m = re.search(r"__doPostBack\('([^']*)','([^']*)'\)", js_value)
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _extract_pagination_actions(html: str, current_url: str) -> list[dict[str, str]]:
+    soup = BeautifulSoup(html or "", "html.parser")
+    actions: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add_action(method: str, value: str, argument: str = "") -> None:
+        key = (method, value, argument)
+        if key in seen:
+            return
+        seen.add(key)
+        actions.append({"method": method, "value": value, "argument": argument})
+
+    def inspect_tag(tag) -> None:
+        text = tag.get_text(separator=" ", strip=True)
+        attrs_text = " ".join(
+            str(tag.get(attr, "")) for attr in ("title", "aria-label", "rel", "class", "id")
+        )
+        label = f"{text} {attrs_text}"
+        if not _looks_like_pagination_control(text, attrs_text):
+            return
+
+        href = tag.get("href", "")
+        onclick = tag.get("onclick", "")
+        formaction = tag.get("formaction", "")
+
+        postback = _parse_do_postback(onclick) or _parse_do_postback(href)
+        if postback:
+            target, argument = postback
+            add_action("postback", target, argument)
+            return
+
+        if href and href != "#" and not href.lower().startswith("javascript:"):
+            add_action("get", urljoin(current_url, href))
+            return
+
+        if formaction:
+            add_action("get", urljoin(current_url, formaction))
+
+    for tag in soup.find_all(["a", "button", "input"]):
+        if tag.name == "input":
+            value = tag.get("value", "")
+            title = tag.get("title", "")
+            aria = tag.get("aria-label", "")
+            label = f"{value} {title} {aria}"
+            if not _looks_like_pagination_control(value, label):
+                continue
+        inspect_tag(tag)
+
+    return actions
+
+
+def extract_pagination_actions(html: str, current_url: str) -> list[dict[str, str]]:
+    return _extract_pagination_actions(html, current_url)
+
+
+def _collect_pagination_candidate_pages(session: requests.Session, base_url: str, html: str) -> list[str]:
+    discovered_html: list[str] = []
+    seen_page_keys: set[str] = set()
+    actions = _extract_pagination_actions(html, base_url)
+
+    for action in actions[:MAX_PAGINATION_PAGES]:
+        key = f"{action.get('method')}:{action.get('value')}:{action.get('argument')}"
+        if key in seen_page_keys:
+            continue
+        seen_page_keys.add(key)
+
+        try:
+            if action["method"] == "get":
+                response = session.get(action["value"], headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
+            else:
+                # ASP.NET postback 風のページ送りを想定する
+                soup = BeautifulSoup(html or "", "html.parser")
+                form = soup.find("form")
+                form_action = form.get("action") if form and form.get("action") else base_url
+                payload: dict[str, str] = {}
+                if form:
+                    for hidden in form.find_all("input", attrs={"type": lambda v: (v or "").lower() == "hidden"}):
+                        name = hidden.get("name")
+                        if name:
+                            payload[name] = hidden.get("value", "")
+                payload["__EVENTTARGET"] = action["value"]
+                payload["__EVENTARGUMENT"] = action.get("argument", "")
+                response = session.post(
+                    urljoin(base_url, form_action),
+                    data=payload,
+                    headers=DEFAULT_HEADERS,
+                    timeout=DEFAULT_TIMEOUT,
+                    allow_redirects=True,
+                )
+
+            if response.status_code == 200 and response.text:
+                discovered_html.append(response.text)
+        except requests.RequestException as exc:
+            write_log(base_url, status_code=None, error=f"pagination RequestException: {exc}", step="observe")
+
+    return discovered_html
+
     #HTMLから取れる場合
         #例: TABLEタグが多い → TABLE_LIST 
             #tr>tbody>table といった数と思われる
@@ -174,15 +302,51 @@ def extract_candidate_lines(ThisPage : PageAnalysis) -> list[str]:
     #HTMLの場合は、soupから大学名候補の行を抽出する
     #PDFの場合は、pdfplumberなどでテキストを抽出して、大学名候補の行を抽出する
     candidate_lines: list[str] = []
+    seen_lines: set[str] = set()
+
+    def add_candidate(text: str) -> None:
+        normalized = re.sub(r"\s+", " ", (text or "").replace("　", " ")).strip()
+        if not normalized:
+            return
+        if normalized in seen_lines:
+            return
+        seen_lines.add(normalized)
+        candidate_lines.append(normalized)
+
     if ThisPage.content_type == ContentType.HTML:
         #HTMLから大学名候補の行を抽出する
-        #例: tableタグの中に、～大学、~University、～College、～Institute などの文字列が含まれる行を抽出する
+        #例: table/td/a/li/option 等の中に、～大学、~University、～College、～Institute などの文字列が含まれる行を抽出する
         soup = BeautifulSoup(ThisPage.response.text, "html.parser")
-        for table in soup.find_all("table"):
-            for row in table.find_all("tr"):
-                row_text = row.get_text(separator=" ", strip=True)
-                if any(k in row_text for k in ("大学", "University", "College", "Institute")):
-                    candidate_lines.append(row_text)
+        candidate_tags = [
+            "table",
+            "tbody",
+            "tr",
+            "td",
+            "th",
+            "a",
+            "li",
+            "option",
+            "label",
+            "button",
+            "h1",
+            "h2",
+            "h3",
+        ]
+
+        for tag_name in candidate_tags:
+            for tag in soup.find_all(tag_name):
+                text = tag.get_text(separator=" ", strip=True)
+                if not text:
+                    continue
+                if any(k in text for k in ("大学", "University", "College", "Institute")):
+                    add_candidate(text)
+
+        # フォームや一覧の近くにある文字列も拾うため、候補数が少ない場合はやや広めに拾う
+        if len(candidate_lines) < 5:
+            for tag in soup.find_all(["div", "span"]):
+                text = tag.get_text(separator=" ", strip=True)
+                if text and any(k in text for k in ("大学", "University", "College", "Institute")):
+                    add_candidate(text)
     
     elif ThisPage.content_type == ContentType.PDF:
         #PDFから大学名候補の行を抽出する
@@ -194,9 +358,10 @@ def extract_candidate_lines(ThisPage : PageAnalysis) -> list[str]:
                 if text:
                     for line in text.splitlines():
                         if any(k in line for k in ("大学", "University", "College", "Institute")):
-                            candidate_lines.append(line.strip())
+                            add_candidate(line.strip())
 
     ThisPage.candidate_lines = candidate_lines
+    return candidate_lines
 
 def extract_universitynamelist(ThisPage : PageAnalysis) -> list[str]:
     # ここでcandidate_linesから大学名を正規化して抽出する
@@ -324,12 +489,27 @@ def observe_url(url: str) -> Optional[PageAnalysis]:
         domain = urlparse(url).netloc
         crawl_delay = get_crawl_delay(domain)
         time.sleep(crawl_delay)  # クロールディレイを考慮して待機
-        response = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
+        session = requests.Session()
+        session.headers.update(DEFAULT_HEADERS)
+        response = session.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
 
         page_analysis = pagetype_analyze(url, response.text)
 
         extract_candidate_lines(page_analysis)
         extract_universitynamelist(page_analysis)
+
+        for followup_html in _collect_pagination_candidate_pages(session, response.url, response.text):
+            followup_page = PageAnalysis(content_type=ContentType.HTML)
+            followup_page.response = type("Resp", (), {"text": followup_html, "content": followup_html.encode("utf-8")})()
+            extract_candidate_lines(followup_page)
+            extract_universitynamelist(followup_page)
+
+            for line in followup_page.candidate_lines:
+                if line not in page_analysis.candidate_lines:
+                    page_analysis.candidate_lines.append(line)
+            for name in followup_page.extracted_universitynamelist:
+                if name not in page_analysis.extracted_universitynamelist:
+                    page_analysis.extracted_universitynamelist.append(name)
 
         if response.status_code == 200:
             Seed_State.add_log(url, status_code=200, step="observe")

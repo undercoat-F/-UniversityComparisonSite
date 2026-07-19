@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
 from xml.etree import ElementTree as ET
 
 import httpx
 import psycopg2
 import requests
 from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
 
 from dataclass.dataclass import SearchHit, SearchRequest, SearchResult, SeedDiscovery, SeedTransformInput
 from observer.observe_supervisor import ObserveStackItem
@@ -72,6 +74,11 @@ MAX_INTERNAL_LINKS_PER_DOMAIN = 16
 MAX_FALLBACK_QUERIES = 2
 MAX_SITEMAP_URLS_PER_DOMAIN = 30
 MAX_SITEMAP_RECURSION = 3
+DEFAULT_MAX_DISCOVERY_QUERIES = 24
+DEFAULT_DISCOVERY_PER_UNIVERSITY_LIMIT = 3
+GOOGLE_RESULTS_EXTRACT_SCRIPT = (
+    Path(__file__).with_name("google_extract_results.js").read_text(encoding="utf-8")
+)
 
 
 def _is_valid_absolute_http_url(url: str) -> bool:
@@ -132,6 +139,149 @@ class BraveSearchAPI:
                 }
             )
         return results
+
+
+class PlaywrightFallbackSearch:
+    """Google 検索を Playwright で実行するフォールバック。"""
+
+    def __init__(self) -> None:
+        self.api_type = "playwright-google"
+        self._enabled = os.getenv("PLAYWRIGHT_GOOGLE_FALLBACK", "1").strip().lower() not in {
+            "0",
+            "false",
+            "off",
+            "no",
+        }
+        self._headless = os.getenv("PLAYWRIGHT_HEADLESS", "1").strip().lower() not in {
+            "0",
+            "false",
+            "off",
+            "no",
+        }
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @staticmethod
+    def _normalize_google_href(href: str) -> str:
+        normalized = (href or "").strip()
+        if not normalized:
+            return ""
+        if normalized.startswith("/url?"):
+            parsed = urlparse(normalized)
+            q = parse_qs(parsed.query).get("q", [""])[0]
+            return q.strip()
+        return normalized
+
+    def search(self, query: str, num_results: int = 10) -> list[dict[str, str]]:
+        if not self.enabled:
+            return []
+
+        google_form = (
+            "https://www.google.com/search"
+            f"?q={quote_plus(query)}&num={max(1, min(int(num_results), 10))}&hl=en"
+        )
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=self._headless)
+            context = browser.new_context(
+                user_agent=DEFAULT_HEADERS["User-Agent"],
+                locale="en-US",
+            )
+            page = context.new_page()
+            page.goto(google_form, wait_until="domcontentloaded", timeout=20000)
+
+            # 同意ダイアログが表示されるケースを許容しつつ検索結果抽出を試みる。
+            for selector in (
+                'button:has-text("I agree")',
+                'button:has-text("Accept all")',
+                'button:has-text("同意する")',
+                'button:has-text("すべて受け入れる")',
+            ):
+                try:
+                    if page.locator(selector).count() > 0:
+                        page.locator(selector).first.click(timeout=800)
+                        break
+                except Exception:
+                    pass
+
+            try:
+                page.wait_for_selector("div#search", timeout=5000)
+            except Exception:
+                pass
+
+            raw_items = page.evaluate(GOOGLE_RESULTS_EXTRACT_SCRIPT)
+            context.close()
+            browser.close()
+
+        rows: list[dict[str, str]] = []
+        seen_urls: set[str] = set()
+        for item in raw_items or []:
+            href = self._normalize_google_href(str(item.get("url") or ""))
+            title = str(item.get("title") or "").strip()
+            snippet = str(item.get("snippet") or "").strip()
+            if not href or not title:
+                continue
+            if not _is_valid_absolute_http_url(href):
+                continue
+            if _is_blocked_seed_domain(_domain(href)):
+                continue
+            if href in seen_urls:
+                continue
+            seen_urls.add(href)
+            rows.append({"url": href, "title": title, "snippet": snippet})
+            if len(rows) >= num_results:
+                break
+        return rows
+
+
+def _search_with_provider_fallback(
+    *,
+    query: str,
+    num_results: int,
+    primary: BraveSearchAPI,
+    secondary: PlaywrightFallbackSearch,
+    errors: list[str],
+) -> tuple[list[dict[str, str]], str | None, bool]:
+    primary_error: Exception | None = None
+
+    if primary.enabled:
+        try:
+            rows = primary.search(query=query, num_results=num_results)
+            return rows, primary.api_type, False
+        except Exception as exc:  # noqa: BLE001
+            primary_error = exc
+            errors.append(f"query={query}: brave_failed: {type(exc).__name__}: {exc}")
+
+    if not secondary.enabled:
+        if primary_error is not None:
+            errors.append(f"query={query}: all_search_providers_failed")
+        return [], None, bool(primary_error) or (not primary.enabled)
+
+    try:
+        rows = secondary.search(query=query, num_results=num_results)
+        reason = "brave_failed" if primary_error is not None else "brave_disabled"
+        errors.append(f"query={query}: provider_fallback_used=playwright-google reason={reason}")
+        return rows, secondary.api_type, True
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"query={query}: playwright_failed: {type(exc).__name__}: {exc}")
+        errors.append(f"query={query}: all_search_providers_failed")
+        return [], None, bool(primary_error) or (not primary.enabled)
+
+
+def _resolve_api_type(
+    primary_api_type: str,
+    fallback_api_type: str,
+    used_provider_types: set[str],
+) -> str:
+    if not used_provider_types:
+        return primary_api_type
+    if used_provider_types == {primary_api_type}:
+        return primary_api_type
+    if used_provider_types == {fallback_api_type}:
+        return fallback_api_type
+    return f"{primary_api_type}+{fallback_api_type}"
 
 
 def _get_db_params() -> dict[str, Any] | None:
@@ -598,12 +748,19 @@ def _discover_internal_links_from_official_hits(
 
 def _select_official_domains(hits: list[SearchHit], university_names: list[str]) -> set[str]:
     domain_scores: dict[str, float] = {}
+    fallback_scores: dict[str, float] = {}
     for hit in hits:
         d = _domain(hit.url)
         if not d:
             continue
         if _is_blocked_seed_domain(d):
             continue
+
+        raw_score = hit.score
+        prev_raw = fallback_scores.get(d, float("-inf"))
+        if raw_score > prev_raw:
+            fallback_scores[d] = raw_score
+
         name_bonus = _domain_match_bonus(d, university_names)
         university_like = _is_university_like_domain(d)
         # 公式候補は「大学系TLD」または「大学名トークン一致」を満たすものに限定する。
@@ -619,7 +776,13 @@ def _select_official_domains(hits: list[SearchHit], university_names: list[str])
             domain_scores[d] = score
 
     selected = sorted(domain_scores.items(), key=lambda x: x[1], reverse=True)[:3]
-    return {d for d, _ in selected}
+    selected_domains = {d for d, _ in selected}
+    if selected_domains:
+        return selected_domains
+
+    # Fallback: strict filterで候補が0件なら、非ブロックかつ高スコアの上位ドメインを使う。
+    fallback_selected = sorted(fallback_scores.items(), key=lambda x: x[1], reverse=True)[:3]
+    return {d for d, _ in fallback_selected}
 
 
 def _existing_root_urls(candidate_roots: list[str]) -> set[str]:
@@ -646,24 +809,84 @@ def _existing_root_urls(candidate_roots: list[str]) -> set[str]:
 
 
 def _build_domain_discovery_queries(request: SearchRequest) -> list[str]:
-    queries: list[str] = []
+    queries, _ = _build_domain_discovery_queries_with_stats(request)
+    return queries
+
+
+def _build_domain_discovery_queries_with_stats(request: SearchRequest) -> tuple[list[str], dict[str, int]]:
+    max_queries_raw = os.getenv("SEARCH_DISCOVERY_QUERY_LIMIT", str(DEFAULT_MAX_DISCOVERY_QUERIES)).strip()
+    try:
+        max_queries = max(1, int(max_queries_raw))
+    except ValueError:
+        max_queries = DEFAULT_MAX_DISCOVERY_QUERIES
+
+    per_uni_raw = os.getenv(
+        "SEARCH_DISCOVERY_PER_UNIVERSITY_LIMIT",
+        str(DEFAULT_DISCOVERY_PER_UNIVERSITY_LIMIT),
+    ).strip()
+    try:
+        per_uni_limit = max(1, int(per_uni_raw))
+    except ValueError:
+        per_uni_limit = DEFAULT_DISCOVERY_PER_UNIVERSITY_LIMIT
+
+    grouped_queries: list[list[str]] = []
+    dropped_empty_names = 0
+
     for name in request.university_names:
         n = name.strip()
         if not n:
+            dropped_empty_names += 1
             continue
-        queries.append(f"{n} 公式")
-        queries.append(f"{n} official")
-        queries.append(f"{n} official site")
+        per_name = [f"{n} 公式", f"{n} official", f"{n} official site"]
+        deduped_per_name: list[str] = []
+        seen_per_name: set[str] = set()
+        for query in per_name:
+            if query in seen_per_name:
+                continue
+            seen_per_name.add(query)
+            deduped_per_name.append(query)
+        grouped_queries.append(deduped_per_name[:per_uni_limit])
+
+    all_generated_count = sum(len(group) for group in grouped_queries)
+
+    # 同じ大学だけが上限を使い切らないよう、大学ごとに1件ずつラウンドロビンで配分する
+    selected: list[str] = []
+    seen_global: set[str] = set()
+    round_index = 0
+    while len(selected) < max_queries:
+        added_in_round = False
+        for group in grouped_queries:
+            if round_index >= len(group):
+                continue
+            q = group[round_index]
+            if q in seen_global:
+                continue
+            seen_global.add(q)
+            selected.append(q)
+            added_in_round = True
+            if len(selected) >= max_queries:
+                break
+        if not added_in_round:
+            break
+        round_index += 1
+
     # 候補が空なら source_domain を使った保険クエリを投げる
-    if not queries and request.source_domain:
-        queries.append(f"{request.source_domain} official")
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for q in queries:
-        if q not in seen:
-            deduped.append(q)
-            seen.add(q)
-    return deduped[:6]
+    used_source_domain_fallback = 0
+    if not selected and request.source_domain:
+        selected.append(f"{request.source_domain} official")
+        used_source_domain_fallback = 1
+
+    stats = {
+        "university_count": len(request.university_names),
+        "dropped_empty_names": dropped_empty_names,
+        "all_generated_count": all_generated_count,
+        "selected_count": len(selected),
+        "dropped_by_global_limit": max(0, all_generated_count - len(selected)),
+        "global_limit": max_queries,
+        "per_university_limit": per_uni_limit,
+        "used_source_domain_fallback": used_source_domain_fallback,
+    }
+    return selected, stats
 
 
 def _build_course_fallback_queries(official_domains: set[str], request: SearchRequest) -> list[str]:
@@ -792,9 +1015,11 @@ def _to_transform_input(
 def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None) -> SeedTransformInput:
     request = build_search_request(item)
     client_api = api or BraveSearchAPI()
-    queries = _build_domain_discovery_queries(request)
+    fallback_api = PlaywrightFallbackSearch()
+    queries, query_stats = _build_domain_discovery_queries_with_stats(request)
     api_usage_count = 0
     api_queries_used: list[str] = []
+    used_provider_types: set[str] = set()
     first_search_count = 0
     internal_link_extracted_count = 0
     fallback_executed = False
@@ -802,29 +1027,37 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
     hits_by_url: dict[str, SearchHit] = {}
     errors: list[str] = []
 
+    errors.append(
+        "query_generation: "
+        f"universities={query_stats['university_count']} "
+        f"generated={query_stats['all_generated_count']} "
+        f"selected={query_stats['selected_count']} "
+        f"dropped_global={query_stats['dropped_by_global_limit']} "
+        f"dropped_empty={query_stats['dropped_empty_names']} "
+        f"global_limit={query_stats['global_limit']} "
+        f"per_university_limit={query_stats['per_university_limit']} "
+        f"source_domain_fallback={query_stats['used_source_domain_fallback']}"
+    )
+
     if not client_api.enabled:
-        errors.append("BRAVE_API_KEY is not set. search is skipped.")
-        base_result = _build_result(request, [], errors)
-        return _to_transform_input(
-            base_result,
-            api_type=client_api.api_type,
-            first_search_count=first_search_count,
-            internal_link_extracted_count=internal_link_extracted_count,
-            fallback_executed=fallback_executed,
-            api_usage_count=api_usage_count,
-            search_queries=api_queries_used,
-            run_id=item.observe_run_id,
-            source_stage="seed_searcher",
-        )
+        errors.append("BRAVE_API_KEY is not set. try playwright fallback.")
+    if not fallback_api.enabled:
+        errors.append("playwright fallback is disabled by PLAYWRIGHT_GOOGLE_FALLBACK.")
 
     for query in queries:
-        try:
-            api_queries_used.append(query)
-            api_usage_count += 1
-            rows = client_api.search(query=query, num_results=8)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"query={query}: {type(exc).__name__}: {exc}")
-            continue
+        api_queries_used.append(query)
+        rows, provider_type, provider_fallback_used = _search_with_provider_fallback(
+            query=query,
+            num_results=8,
+            primary=client_api,
+            secondary=fallback_api,
+            errors=errors,
+        )
+        api_usage_count += 1
+        if provider_type:
+            used_provider_types.add(provider_type)
+        if provider_fallback_used:
+            fallback_executed = True
 
         first_search_count += len(rows)
 
@@ -889,15 +1122,21 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
     merged_hits = sorted(hits_by_url.values(), key=lambda h: h.score, reverse=True)
     if not any(hit.course_list_detected or hit.is_course_like for hit in merged_hits):
         fallback_queries = _build_course_fallback_queries(official_domains, request)
-        fallback_executed = bool(fallback_queries)
+        fallback_executed = fallback_executed or bool(fallback_queries)
         for query in fallback_queries:
-            try:
-                api_queries_used.append(query)
-                api_usage_count += 1
-                rows = client_api.search(query=query, num_results=6)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"fallback_query={query}: {type(exc).__name__}: {exc}")
-                continue
+            api_queries_used.append(query)
+            rows, provider_type, provider_fallback_used = _search_with_provider_fallback(
+                query=query,
+                num_results=6,
+                primary=client_api,
+                secondary=fallback_api,
+                errors=errors,
+            )
+            api_usage_count += 1
+            if provider_type:
+                used_provider_types.add(provider_type)
+            if provider_fallback_used:
+                fallback_executed = True
 
             for row in rows:
                 url = row["url"]
@@ -918,7 +1157,16 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
         merged_hits = _enrich_hits_with_probe(merged_hits, errors)
 
     hits = merged_hits
-    result = _build_result(request, hits, errors, official_domains=official_domains)
+    # 投入時は「非ブロックドメイン」だけを要件として扱い、公式ドメイン一致は強制しない。
+    result = _build_result(request, hits, errors, official_domains=None)
+    resolved_api_type = _resolve_api_type(
+        primary_api_type=client_api.api_type,
+        fallback_api_type=fallback_api.api_type,
+        used_provider_types=used_provider_types,
+    )
+
+    if not hits:
+        result.errors.append("search_failed: no hits produced by brave or playwright fallback")
 
     search_log_store = SearchLogStore.from_env()
     if search_log_store is not None:
@@ -928,7 +1176,7 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
                 SearchRunLogRecord(
                     source_url=request.source_url,
                     source_domain=request.source_domain,
-                    api_type=client_api.api_type,
+                    api_type=resolved_api_type,
                     first_search_count=first_search_count,
                     internal_link_extracted_count=internal_link_extracted_count,
                     fallback_executed=fallback_executed,
@@ -944,7 +1192,7 @@ def _search_seeds_sync(item: ObserveStackItem, api: BraveSearchAPI | None = None
 
     return _to_transform_input(
         result,
-        api_type=client_api.api_type,
+        api_type=resolved_api_type,
         first_search_count=first_search_count,
         internal_link_extracted_count=internal_link_extracted_count,
         fallback_executed=fallback_executed,

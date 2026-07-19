@@ -54,6 +54,90 @@ async def _passthrough_probe_hits(hits, errors):
 
 
 class TestSeedSearcher(unittest.TestCase):
+    def test_discovery_queries_allow_more_than_six_by_default(self):
+        req = seed_searcher.SearchRequest(
+            source_url="https://example.org",
+            source_domain="example.org",
+            university_names=["A University", "B University", "C University"],
+            content_type="html",
+            candidate_lines=[],
+        )
+
+        queries = seed_searcher._build_domain_discovery_queries(req)
+        self.assertGreaterEqual(len(queries), 7)
+
+    def test_discovery_queries_are_distributed_across_universities_under_global_limit(self):
+        req = seed_searcher.SearchRequest(
+            source_url="https://example.org",
+            source_domain="example.org",
+            university_names=["A University", "B University", "C University"],
+            content_type="html",
+            candidate_lines=[],
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SEARCH_DISCOVERY_QUERY_LIMIT": "4",
+                "SEARCH_DISCOVERY_PER_UNIVERSITY_LIMIT": "3",
+            },
+            clear=False,
+        ):
+            queries = seed_searcher._build_domain_discovery_queries(req)
+
+        self.assertEqual(len(queries), 4)
+        self.assertIn("A University 公式", queries)
+        self.assertIn("B University 公式", queries)
+        self.assertIn("C University 公式", queries)
+        self.assertIn("A University official", queries)
+
+    def test_query_generation_summary_is_logged(self):
+        item = _build_item("Summary University")
+
+        def fake_search(query: str, num_results: int = 10):
+            return []
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "BRAVE_API_KEY": "dummy-key",
+                    "SEARCH_DISCOVERY_QUERY_LIMIT": "2",
+                    "SEARCH_DISCOVERY_PER_UNIVERSITY_LIMIT": "3",
+                },
+                clear=False,
+            ),
+            patch("observer.seed_searcher.BraveSearchAPI.search", side_effect=fake_search),
+            patch("observer.seed_searcher._existing_root_urls", return_value=set()),
+            patch("observer.seed_searcher.SearchLogStore.from_env", return_value=None),
+            patch("observer.seed_searcher._probe_hits_async", new=_passthrough_probe_hits),
+            patch(
+                "observer.seed_searcher.requests.get",
+                return_value=_DummyResponse(text="<html><body>ok</body></html>"),
+            ),
+        ):
+            result = seed_searcher.search_seeds(item)
+
+        summary = next((e for e in result.errors if e.startswith("query_generation:")), "")
+        self.assertIn("generated=3", summary)
+        self.assertIn("selected=2", summary)
+        self.assertIn("dropped_global=1", summary)
+
+    def test_official_domain_selection_falls_back_when_strict_empty(self):
+        hits = [
+            SearchHit(
+                query="東京大学 公式",
+                url="https://www.u-tokyo.ac.jp/",
+                title="東京大学",
+                snippet="公式サイト",
+                score=8.0,
+                is_course_like=True,
+            )
+        ]
+
+        domains = seed_searcher._select_official_domains(hits, ["東京大学"])
+        self.assertIn("www.u-tokyo.ac.jp", domains)
+
     def test_query_uses_normalized_university_name_from_sentence(self):
         item = _build_item("私は東京大学に行って研究をしています")
 
@@ -87,7 +171,7 @@ class TestSeedSearcher(unittest.TestCase):
         self.assertIn("東京大学 公式", call_queries)
         self.assertTrue(any("u-tokyo.ac.jp" in u for u in result.root_seed_urls))
 
-    def test_non_official_domains_are_excluded_from_seed_urls(self):
+    def test_non_official_domains_can_be_included_in_seed_urls(self):
         item = _build_item("Official University")
 
         def fake_search(query: str, num_results: int = 10):
@@ -120,8 +204,8 @@ class TestSeedSearcher(unittest.TestCase):
             result = seed_searcher.search_seeds(item)
 
         self.assertTrue(any("official.ac.uk" in u for u in result.root_seed_urls))
-        self.assertFalse(any("traininginstitute.org" in u for u in result.root_seed_urls))
-        self.assertFalse(any("traininginstitute.org" in u for u in result.detailed_seed_urls))
+        self.assertTrue(any("traininginstitute.org" in u for u in result.root_seed_urls))
+        self.assertTrue(any("traininginstitute.org" in u for u in result.detailed_seed_urls))
 
     def test_blocked_noise_domains_are_not_added_to_seed_urls(self):
         item = _build_item("Noise University")
@@ -299,7 +383,6 @@ class TestSeedSearcher(unittest.TestCase):
         self.assertTrue(result.course_list_found)
         self.assertEqual(result.recommended_depth, 1)
         self.assertTrue(any("/programmes" in hit.url for hit in result.hits))
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

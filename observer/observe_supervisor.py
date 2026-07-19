@@ -14,7 +14,7 @@ OBSERVE_SOURCE_URLS: list[str] = [
     "https://www.mext.go.jp/a_menu/koutou/suuri_datascience_ai/mext_00005.html",
     
     "https://www.cicic.ca/869/resultats.canada?search=",
-    "https://www.cicic.ca/869/results.canada?search="
+    #"https://www.cicic.ca/869/results.canada?search="
 ]
 
 
