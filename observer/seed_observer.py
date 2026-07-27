@@ -23,7 +23,8 @@ DEFAULT_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
-DEFAULT_TIMEOUT = 1.0  # seconds
+DEFAULT_TIMEOUT = 10.0  # seconds
+DEFAULT_CRAWL_DELAY = 1.0  # seconds
 MAX_PAGINATION_PAGES = 5
 
 PAGINATION_KEYWORDS = (
@@ -105,18 +106,17 @@ def get_crawl_delay(domain: str) -> float:
         crawl_delay = robots_parser.crawl_delay("*")
 
         if crawl_delay is None:
-            crawl_delay = DEFAULT_TIMEOUT  # デフォルトのクロールディレイを設定
+            crawl_delay = DEFAULT_CRAWL_DELAY  # デフォルトのクロールディレイを設定
 
         return crawl_delay
 
-    return DEFAULT_TIMEOUT
+    return DEFAULT_CRAWL_DELAY
     
-def pagetype_analyze(url: str, html: str) -> PageAnalysis:
+def pagetype_analyze(response: requests.Response) -> PageAnalysis:
     # ここでページのHTMLを解析して、PageTypeを判定する
     global ThisPage
     ThisPage = PageAnalysis()
 
-    response = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
     ThisPage.response = response
     response_content_type = response.headers.get("Content-Type", "").lower()
 
@@ -132,7 +132,7 @@ def pagetype_analyze(url: str, html: str) -> PageAnalysis:
         ThisPage.content_type = ContentType.OTHER
 
     if ThisPage.content_type == ContentType.HTML:
-        soup = BeautifulSoup(html or "", "html.parser")
+        soup = BeautifulSoup(response.text or "", "html.parser")
 
         all_tags = soup.find_all(True)
         tag_counts: dict[str, int] = {}
@@ -336,6 +336,9 @@ def extract_candidate_lines(ThisPage : PageAnalysis) -> list[str]:
         for tag_name in candidate_tags:
             for tag in soup.find_all(tag_name):
                 text = tag.get_text(separator=" ", strip=True)
+                if tag_name == "a" and not text:
+                    # Anchor text can be empty when labels are set in attributes.
+                    text = (tag.get("title") or tag.get("aria-label") or "").strip()
                 if not text:
                     continue
                 if any(k in text for k in ("大学", "University", "College", "Institute")):
@@ -493,7 +496,7 @@ def observe_url(url: str) -> Optional[PageAnalysis]:
         session.headers.update(DEFAULT_HEADERS)
         response = session.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
 
-        page_analysis = pagetype_analyze(url, response.text)
+        page_analysis = pagetype_analyze(response)
 
         extract_candidate_lines(page_analysis)
         extract_universitynamelist(page_analysis)

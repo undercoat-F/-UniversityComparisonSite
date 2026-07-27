@@ -106,13 +106,13 @@ if __name__ == "__main__":
         "--pg-dsn",
         type=str,
         default="",
-        help="PostgreSQL DSN (if omitted, use QUEUE_LOG_POSTGRES_DSN)",
+        help="PostgreSQL DSN (if omitted, use PARENT_DB_OWNER_CONNECTION)",
     )
     args = parser.parse_args()
 
-    pg_dsn = args.pg_dsn.strip() or os.getenv("QUEUE_LOG_POSTGRES_DSN", "").strip()
+    pg_dsn = args.pg_dsn.strip() or os.getenv("PARENT_DB_OWNER_CONNECTION", "").strip()
     if not pg_dsn:
-        raise SystemExit("QUEUE_LOG_POSTGRES_DSN or --pg-dsn is required")
+        raise SystemExit("PARENT_DB_OWNER_CONNECTION or --pg-dsn is required")
 
     run_measurement(
         events=args.events,

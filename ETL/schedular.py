@@ -1,10 +1,9 @@
-import asyncio
+﻿import asyncio
 import ast
 import json
 import os
 import psycopg2
 import shutil
-import time
 from datetime import datetime
 import traceback
 from urllib.parse import urlparse
@@ -12,14 +11,20 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from ETL.dispatcher import run_dispatcher
+from ETL.resource_recorder import start_resource_monitor, stop_resource_monitor
 from crawler.metrics import analyze_degree_duplicates
+from db.schema_config import get_observer_schema, get_public_schema, get_table_ref, set_search_path
 
 load_dotenv(encoding="utf-8-sig")
+
+SEED_URLS_TABLE = get_table_ref("SEED_URLS_TABLE")
+UNIVERSITIES_TABLE = get_table_ref("UNIVERSITIES_TABLE")
 
 
 # (URL, depth) tuple list
 URL_LIST_PATH = os.path.join("ETL", "URLs.txt")
-
+#スキップする時間の設定（月単位）
+RECENT_SKIP_MONTHS_ENV = "ETL_RECENT_SKIP_MONTHS"
 
 def get_db_params():
 	"""PostgreSQL 接続パラメータを .env から取得"""
@@ -63,24 +68,25 @@ def snapshot_csv_outputs(url, log_dt, src_dir="db/csv_output"):
 
 
 def load_targets_from_db():
-	"""PostgreSQL から enabled=1 の seed_urls を読み込む"""
-	query = """
-		SELECT root_url, depth
-		FROM seed_urls
-		WHERE enabled = 1
-		ORDER BY id
-	"""
+    """PostgreSQL から enabled=1 の seed_urls を読み込む"""
 
-	try:
-		db_params = get_db_params()
-		with psycopg2.connect(**db_params) as conn:
-			cursor = conn.cursor()
-			cursor.execute(query)
-			rows = cursor.fetchall()
-		return [(str(url), int(depth)) for url, depth in rows]
-	except psycopg2.Error as e:
-		print(f"[WARN] seed_urls 読み込み失敗: {e}")
-		return []
+    query = f"""
+        SELECT root_url, depth
+        FROM {SEED_URLS_TABLE}
+        WHERE enabled = 1
+        ORDER BY id
+    """
+    try:
+        db_params = get_db_params()
+        with psycopg2.connect(**db_params) as conn:
+            cursor = conn.cursor()
+            set_search_path(cursor, get_observer_schema(), get_public_schema())
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            return [(str(url), int(depth)) for url, depth in rows]
+    except psycopg2.Error as e:
+        print(f"[WARN] seed_urls 読み込み失敗: {e}")
+        return []
 
 
 def load_targets_from_txt(path=URL_LIST_PATH):
@@ -112,6 +118,83 @@ def load_targets():
     if targets:
         return targets
     return load_targets_from_txt()
+
+
+def _normalize_domain(value: str) -> str:
+    text = (value or "").strip().lower()
+    if not text:
+        return ""
+
+    parsed = urlparse(text if "://" in text else f"https://{text}")
+    domain = (parsed.netloc or parsed.path).strip().lower()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    return domain
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def load_recent_university_domains_from_db(months: int) -> set[str]:
+    dsn = (os.getenv("PARENT_DB_OWNER_CONNECTION") or "").strip()
+
+    query = f"""
+        SELECT url
+        FROM {UNIVERSITIES_TABLE}
+        WHERE created_at >= NOW() - make_interval(months => %s)
+          AND url IS NOT NULL
+          AND url <> ''
+    """
+
+    try:
+        if dsn:
+            conn_ctx = psycopg2.connect(dsn)
+        else:
+            conn_ctx = psycopg2.connect(**get_db_params())
+        with conn_ctx as conn:
+            with conn.cursor() as cursor:
+                set_search_path(cursor, get_public_schema())
+                cursor.execute(query, (months,))
+                rows = cursor.fetchall()
+    except psycopg2.Error as e:
+        print(f"[SCHEDULER][WARN] recent-domain query failed: {e}", flush=True)
+        return set()
+
+    domains = {_normalize_domain(str(url)) for (url,) in rows}
+    domains.discard("")
+    return domains
+
+
+def filter_targets_by_recent_universities(targets: list[tuple[str, int]], months: int) -> list[tuple[str, int]]:
+    if months <= 0:
+        return targets
+
+    recent_domains = load_recent_university_domains_from_db(months)
+    if not recent_domains:
+        return targets
+
+    filtered: list[tuple[str, int]] = []
+    skipped = 0
+    for url, depth in targets:
+        domain = _normalize_domain(url)
+        if domain and domain in recent_domains:
+            skipped += 1
+            continue
+        filtered.append((url, depth))
+
+    print(
+        f"[SCHEDULER] recent-domain filter months={months} "
+        f"before={len(targets)} skipped={skipped} after={len(filtered)}",
+        flush=True,
+    )
+    return filtered
 
 
 def write_extraction_logs(site_states, log_dt):
@@ -151,9 +234,21 @@ def write_extraction_logs(site_states, log_dt):
     return jsonl_path, summary_path, total_records, total_degrees
 
 
-async def run_etl():
-    targets = load_targets()
+def summarize_extractions(site_states):
+    total_records = 0
+    total_degrees = 0
+    for site in site_states:
+        total_records += len(site.extracted_records)
+        for record in site.extracted_records:
+            total_degrees += len(record.get("degrees", []))
+    return total_records, total_degrees
+
+
+async def run_etl(*, persist_extraction_logs: bool = True):
     log_dt = datetime.now().strftime("%Y%m%d_%H%M%S")
+    targets = load_targets()
+    skip_months = _env_int(RECENT_SKIP_MONTHS_ENV, 6)
+    targets = filter_targets_by_recent_universities(targets, skip_months)
     ts_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[SCHEDULER] ETL start targets={len(targets)}", flush=True)
     os.makedirs("log", exist_ok=True)
@@ -162,11 +257,14 @@ async def run_etl():
         f.write(f"# ETL start: {ts_start} ({len(targets)} sites)\n")
         f.write(f"{'#'*10}\n\n")
 
+    monitor_state = start_resource_monitor(log_dt)
     try:
         site_states = await run_dispatcher(targets)
     except Exception as e:
         write_etl_error_log("ALL", "dispatcher", e, log_dt)
         raise
+    finally:
+        stop_resource_monitor(monitor_state)
 
     for site in site_states:
         print(
@@ -179,21 +277,43 @@ async def run_etl():
             for error_msg in site.errors:
                 write_etl_error_log(site.domain, "crawl", RuntimeError(error_msg), log_dt)
 
-    jsonl_path, summary_path, total_records, total_degrees = write_extraction_logs(site_states, log_dt)
+    if persist_extraction_logs:
+        jsonl_path, summary_path, total_records, total_degrees = write_extraction_logs(site_states, log_dt)
+    else:
+        jsonl_path = None
+        summary_path = None
+        total_records, total_degrees = summarize_extractions(site_states)
 
     ts_end = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(f"log/crawl_log_{log_dt}.txt", "a", encoding="utf-8") as f:
         f.write(f"{'#'*10}\n")
         f.write(f"# ETL finished: {ts_end}\n")
         f.write(f"# extracted records: {total_records} / extracted degrees: {total_degrees}\n")
-        f.write(f"# extracted JSONL: {jsonl_path}\n")
-        f.write(f"# extracted summary: {summary_path}\n")
+        if jsonl_path:
+            f.write(f"# extracted JSONL: {jsonl_path}\n")
+        if summary_path:
+            f.write(f"# extracted summary: {summary_path}\n")
         f.write(f"{'#'*10}\n\n")
 
     print("\nScheduler run completed")
     print(f"Error details: log/etl_error_log_{log_dt}.txt")
-    print(f"Extracted JSONL: {jsonl_path}")
-    print(f"Extracted summary: {summary_path}")
+    if jsonl_path:
+        print(f"Extracted JSONL: {jsonl_path}")
+    if summary_path:
+        print(f"Extracted summary: {summary_path}")
+    if monitor_state:
+        print(f"Resource log: {monitor_state[2]}")
+
+    return {
+        "log_dt": log_dt,
+        "jsonl_path": jsonl_path,
+        "summary_path": summary_path,
+        "total_records": total_records,
+        "total_degrees": total_degrees,
+        "resource_log_path": monitor_state[2] if monitor_state else None,
+        "site_states": site_states,
+    }
 
 if __name__ == "__main__":
     asyncio.run(run_etl())
+

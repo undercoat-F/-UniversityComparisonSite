@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 from dataclasses import dataclass
@@ -15,7 +15,23 @@ except Exception:  # pragma: no cover
     Json = None
 
 from dataclass.dataclass import SeedTransformInput
+from db.schema_config import get_table_ref, render_sql_template
 from observer.observe_supervisor import ObserveStackItem
+
+SEED_OBSERVE_RUNS_TABLE = get_table_ref("SEED_OBSERVE_RUNS_TABLE")
+SEED_OBSERVE_RESULTS_TABLE = get_table_ref("SEED_OBSERVE_RESULTS_TABLE")
+
+
+def _build_dsn_from_db_env() -> str:
+    required = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
+    if not all((os.getenv(name, "").strip() for name in required)):
+        return ""
+    host = os.getenv("DB_HOST", "").strip()
+    dbname = os.getenv("DB_NAME", "").strip()
+    user = os.getenv("DB_USER", "").strip()
+    password = os.getenv("DB_PASSWORD", "").strip()
+    port = os.getenv("DB_PORT", "5432").strip() or "5432"
+    return f"postgresql://{user}:{password}@{host}:{port}/{dbname}?sslmode=require"
 
 
 def _json_value(value: Any) -> Any:
@@ -50,11 +66,9 @@ class ObserveLogStore:
         if not enabled:
             return None
 
-        pg_dsn = (
-            os.getenv("OBSERVE_LOG_POSTGRES_DSN", "").strip()
-            or os.getenv("SEARCH_LOG_POSTGRES_DSN", "").strip()
-            or os.getenv("QUEUE_LOG_POSTGRES_DSN", "").strip()
-        )
+        pg_dsn = os.getenv("OBSERVE_LOG_POSTGRES_DSN", "").strip() or os.getenv("PARENT_DB_OWNER_CONNECTION", "").strip()
+        if not pg_dsn:
+            pg_dsn = _build_dsn_from_db_env()
         if not pg_dsn:
             return None
 
@@ -74,7 +88,7 @@ class ObserveLogStore:
 
     def init_db(self) -> None:
         with open(self.schema_path, "r", encoding="utf-8") as f:
-            schema_sql = f.read()
+            schema_sql = render_sql_template(f.read())
         conn = self._connect()
         cur = conn.cursor()
         try:
@@ -91,8 +105,8 @@ class ObserveLogStore:
         cur = conn.cursor()
         try:
             cur.execute(
-                """
-                INSERT INTO seed_observe_runs (
+                f"""
+                INSERT INTO {SEED_OBSERVE_RUNS_TABLE} (
                     external_run_id,
                     source_count,
                     observed_count,
@@ -134,8 +148,8 @@ class ObserveLogStore:
         cur = conn.cursor()
         try:
             cur.execute(
-                """
-                UPDATE seed_observe_runs
+                f"""
+                UPDATE {SEED_OBSERVE_RUNS_TABLE}
                    SET external_run_id = %s,
                        source_count = %s,
                        observed_count = %s,
@@ -191,8 +205,8 @@ class ObserveLogStore:
         }
         try:
             cur.execute(
-                """
-                INSERT INTO seed_observe_results (
+                f"""
+                INSERT INTO {SEED_OBSERVE_RESULTS_TABLE} (
                     run_id,
                     external_run_id,
                     source_stage,

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 from dataclasses import dataclass
@@ -9,6 +9,21 @@ try:
 except Exception:  # pragma: no cover
     psycopg2 = None
 from dataclass.dataclass import SearchRunLogRecord
+from db.schema_config import get_table_ref, render_sql_template
+
+SEED_SEARCH_RUNS_TABLE = get_table_ref("SEED_SEARCH_RUNS_TABLE")
+
+
+def _build_dsn_from_db_env() -> str:
+    required = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
+    if not all((os.getenv(name, "").strip() for name in required)):
+        return ""
+    host = os.getenv("DB_HOST", "").strip()
+    dbname = os.getenv("DB_NAME", "").strip()
+    user = os.getenv("DB_USER", "").strip()
+    password = os.getenv("DB_PASSWORD", "").strip()
+    port = os.getenv("DB_PORT", "5432").strip() or "5432"
+    return f"postgresql://{user}:{password}@{host}:{port}/{dbname}?sslmode=require"
 
 #不明　おそらくログやデータベースの操作に関するクラスや関数の設定を環境変数で設定するための関数
 class SearchLogStore:
@@ -23,7 +38,9 @@ class SearchLogStore:
         if not enabled:
             return None
 
-        pg_dsn = os.getenv("SEARCH_LOG_POSTGRES_DSN", "").strip() or os.getenv("QUEUE_LOG_POSTGRES_DSN", "").strip()
+        pg_dsn = os.getenv("PARENT_DB_OWNER_CONNECTION", "").strip()
+        if not pg_dsn:
+            pg_dsn = _build_dsn_from_db_env()
         if not pg_dsn:
             return None
 
@@ -43,7 +60,7 @@ class SearchLogStore:
 
     def init_db(self) -> None:
         with open(self.schema_path, "r", encoding="utf-8") as f:
-            schema_sql = f.read()
+            schema_sql = render_sql_template(f.read())
         conn = self._connect()
         cur = conn.cursor()
         try:
@@ -60,8 +77,8 @@ class SearchLogStore:
         cur = conn.cursor()
         try:
             cur.execute(
-                """
-                INSERT INTO seed_search_runs (
+                f"""
+                INSERT INTO {SEED_SEARCH_RUNS_TABLE} (
                     run_id,
                     source_stage,
                     source_url,
@@ -97,3 +114,4 @@ class SearchLogStore:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+

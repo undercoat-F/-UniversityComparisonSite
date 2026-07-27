@@ -1,12 +1,15 @@
-import os
+﻿import os
 from urllib.parse import urlparse
 
 import psycopg2
 from dotenv import load_dotenv
 
+from db.schema_config import get_observer_schema, get_public_schema, get_table_ref, render_sql_template, set_search_path
+
 load_dotenv(encoding="utf-8-sig")
 
 SCHEMA_PATH = os.path.join("ETL", "seed_urls_schema_pg.sql")
+SEED_URLS_TABLE = get_table_ref("SEED_URLS_TABLE")
 
 
 def infer_country(url: str) -> str:
@@ -50,12 +53,13 @@ def init_db(schema_path=SCHEMA_PATH):
         raise FileNotFoundError(f"schema file not found: {schema_path}")
 
     with open(schema_path, "r", encoding="utf-8") as f:
-        schema_sql = f.read()
+        schema_sql = render_sql_template(f.read())
 
     db_params = get_db_params()
     try:
         with psycopg2.connect(**db_params) as conn:
             cursor = conn.cursor()
+            set_search_path(cursor, get_observer_schema(), get_public_schema())
             cursor.execute(schema_sql)
             conn.commit()
             print(f"seed_urls テーブルを作成/確認しました")
@@ -81,10 +85,11 @@ def upsert_targets(targets, db_path=None):
     try:
         with psycopg2.connect(**db_params) as conn:
             cursor = conn.cursor()
+            set_search_path(cursor, get_observer_schema(), get_public_schema())
             for country, domain, root_url, depth in rows:
                 cursor.execute(
-                    """
-                    INSERT INTO seed_urls (country, domain, root_url, depth)
+                    f"""
+                    INSERT INTO {SEED_URLS_TABLE} (country, domain, root_url, depth)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT(domain, root_url) DO UPDATE SET
                         country=EXCLUDED.country,
@@ -106,7 +111,8 @@ def count_enabled(db_path=None):
     try:
         with psycopg2.connect(**db_params) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM seed_urls WHERE enabled = 1")
+            set_search_path(cursor, get_observer_schema(), get_public_schema())
+            cursor.execute(f"SELECT COUNT(*) FROM {SEED_URLS_TABLE} WHERE enabled = 1")
             return cursor.fetchone()[0]
     except psycopg2.Error as e:
         print(f"count_enabled エラー: {e}")
@@ -123,4 +129,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

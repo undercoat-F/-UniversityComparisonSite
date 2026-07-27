@@ -15,6 +15,14 @@ OBSERVE_SOURCE_URLS: list[str] = [
     
     "https://www.cicic.ca/869/resultats.canada?search=",
     #"https://www.cicic.ca/869/results.canada?search="
+
+    #"https://www.teqsa.gov.au/search",
+    #"https://www.teqsa.gov.au/search?page=8",　なぜか未返答
+    
+    "https://www.gov.ie/en/schools/",
+    "https://www.gov.ie/en/schools/?page=6",#アイルランド
+
+    
 ]
 
 

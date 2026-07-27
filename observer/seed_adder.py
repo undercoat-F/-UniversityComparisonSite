@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -11,7 +11,11 @@ except Exception:  # pragma: no cover
     psycopg2 = None
 
 from dataclass.dataclass import SeedTransformInput
+from db.schema_config import get_observer_schema, get_public_schema, get_table_ref, set_search_path
 from observer.seed_transformer import to_adder_targets_batch
+
+SEED_URLS_TABLE = get_table_ref("SEED_URLS_TABLE")
+SEED_OBSERVE_RESULTS_TABLE = get_table_ref("SEED_OBSERVE_RESULTS_TABLE")
 
 try:
     from ETL import init_seed_db as init_seed_db
@@ -38,21 +42,50 @@ BLOCKED_SEED_DOMAINS = {
     "youtube.com",
     "zoominfo.com",
     "tiktok.com",
+    "kotobank.jp",
 }
 
 
 def _pick_stage_dsn() -> tuple[str, str]:
-    value = os.getenv("OBSERVER_DSN", "").strip()
-    if value:
-        return value, "OBSERVER_DSN"
-    raise RuntimeError("No stage DSN found. Set OBSERVER_DSN.")
+    for env_name in ("PARENT_DB_OWNER_CONNECTION",):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value, env_name
+
+    required = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
+    if all((os.getenv(name, "").strip() for name in required)):
+        host = os.getenv("DB_HOST", "").strip()
+        dbname = os.getenv("DB_NAME", "").strip()
+        user = os.getenv("DB_USER", "").strip()
+        password = os.getenv("DB_PASSWORD", "").strip()
+        port = os.getenv("DB_PORT", "5432").strip() or "5432"
+        dsn = f"postgresql://{user}:{password}@{host}:{port}/{dbname}?sslmode=require"
+        return dsn, "DB_*"
+
+    raise RuntimeError(
+        "No stage DSN found. Set PARENT_DB_OWNER_CONNECTION or DB_* vars."
+    )
 
 
 def _pick_target_params_or_dsn() -> tuple[str | None, dict[str, object] | None, str]:
-    value = os.getenv("ETL_DSN", "").strip()
-    if value:
-        return value, None, "ETL_DSN"
-    raise RuntimeError("No target DSN found. Set ETL_DSN.")
+    for env_name in ("PARENT_DB_OWNER_CONNECTION",):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value, None, env_name
+
+    required = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
+    if all((os.getenv(name, "").strip() for name in required)):
+        host = os.getenv("DB_HOST", "").strip()
+        dbname = os.getenv("DB_NAME", "").strip()
+        user = os.getenv("DB_USER", "").strip()
+        password = os.getenv("DB_PASSWORD", "").strip()
+        port = os.getenv("DB_PORT", "5432").strip() or "5432"
+        dsn = f"postgresql://{user}:{password}@{host}:{port}/{dbname}?sslmode=require"
+        return dsn, None, "DB_*"
+
+    raise RuntimeError(
+        "No target DSN found. Set PARENT_DB_OWNER_CONNECTION or DB_* vars."
+    )
 
 
 def _json_to_list(value: object) -> list[str]:
@@ -173,12 +206,13 @@ def _upsert_targets_with_connection(conn, targets: list[tuple[str, int]]) -> int
         from ETL import init_seed_db as db_module
 
     with conn.cursor() as cursor:
+        set_search_path(cursor, get_observer_schema(), get_public_schema())
         for root_url, depth in targets:
             domain = urlparse(root_url).netloc
             country = db_module.infer_country(root_url)
             cursor.execute(
-                """
-                INSERT INTO seed_urls (country, domain, root_url, depth)
+                f"""
+                INSERT INTO {SEED_URLS_TABLE} (country, domain, root_url, depth)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT(domain, root_url) DO UPDATE SET
                     country=EXCLUDED.country,
@@ -201,8 +235,8 @@ def promote_high_quality_targets_from_stage(
 ) -> SeedPromotionSummary:
     """Promote high-quality observer results from stage DB to target seed_urls DB.
 
-    Stage DB: observer result store (typically SEARCH_LOG_POSTGRES_DSN)
-    Target DB: ETL seed_urls store (typically QUEUE_LOG_POSTGRES_DSN or DB_*)
+    Stage DB: observer result store (typically PARENT_DB_OWNER_CONNECTION)
+    Target DB: ETL seed_urls store (typically PARENT_DB_OWNER_CONNECTION or DB_*)
     """
     if psycopg2 is None:
         raise RuntimeError("psycopg2 is required for DB promotion. Install psycopg2-binary.")
@@ -212,8 +246,9 @@ def promote_high_quality_targets_from_stage(
 
     with psycopg2.connect(stage_dsn) as stage_conn:
         with stage_conn.cursor() as stage_cur:
+            set_search_path(stage_cur, get_observer_schema(), get_public_schema())
             stage_cur.execute(
-                """
+                f"""
                 SELECT
                     source_url,
                     root_seed_urls,
@@ -222,7 +257,7 @@ def promote_high_quality_targets_from_stage(
                     recommended_depth,
                     hit_count,
                     error_count
-                FROM seed_observe_results
+                FROM {SEED_OBSERVE_RESULTS_TABLE}
                 WHERE (%s::bigint IS NULL OR run_id = %s)
                   AND (%s::bigint IS NULL OR external_run_id = %s)
                 ORDER BY id DESC
@@ -230,7 +265,6 @@ def promote_high_quality_targets_from_stage(
                 (observe_log_run_id, observe_log_run_id, external_run_id, external_run_id),
             )
             stage_rows = stage_cur.fetchall()
-
     targets, scanned, accepted = _stage_rows_to_targets(
         stage_rows,
         min_hit_count=min_hit_count,
@@ -238,7 +272,7 @@ def promote_high_quality_targets_from_stage(
         max_recommended_depth=max_recommended_depth,
     )
 
-    # Mirror write: keep seed_urls in OBSERVER_DSN and ETL_DSN in sync.
+    # Mirror write: stage DB and target DB are handled independently when they differ.
     if stage_dsn == target_dsn:
         with psycopg2.connect(stage_dsn) as shared_conn:
             promoted = _upsert_targets_with_connection(shared_conn, targets)
@@ -294,3 +328,4 @@ def add_seed_targets(items: list[SeedTransformInput], *, ensure_schema: bool = F
         else:
             raise
     return len(targets)
+

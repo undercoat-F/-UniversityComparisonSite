@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 test_observer_pipeline.py
@@ -22,6 +22,9 @@ if "dotenv" not in sys.modules:
 from dataclass.dataclass import ContentType, PageAnalysis, SeedTransformInput
 from observer.observe_supervisor import InMemoryObserveQueue, ObserveRunResult, ObserveStackItem
 from observer.observe_log import ObserveLogStore
+from db.schema_config import get_table_ref
+
+SEED_OBSERVE_RESULTS_TABLE = get_table_ref("SEED_OBSERVE_RESULTS_TABLE")
 from observer.observer import run_observer_pipeline
 
 
@@ -123,7 +126,7 @@ class TestObserverPipeline(unittest.TestCase):
             )
 
         executed_sql, params = dummy_conn.cursor_obj.executed[0]
-        self.assertIn("INSERT INTO seed_observe_results", executed_sql)
+        self.assertIn(f"INSERT INTO {SEED_OBSERVE_RESULTS_TABLE}", executed_sql)
         self.assertEqual(params[4], "example.edu")
 
     def test_pipeline_writes_observe_logs(self):
@@ -170,8 +173,8 @@ class TestObserverPipeline(unittest.TestCase):
                     scanned_rows=1,
                     accepted_rows=1,
                     promoted_targets=1,
-                    stage_source="OBSERVER_DSN",
-                    target_source="ETL_DSN",
+                    stage_source="PARENT_DB_OWNER_CONNECTION",
+                    target_source="PARENT_DB_OWNER_CONNECTION",
                 ),
             ),
         ):
@@ -239,8 +242,8 @@ class TestObserverPipeline(unittest.TestCase):
                     scanned_rows=1,
                     accepted_rows=1,
                     promoted_targets=1,
-                    stage_source="OBSERVER_DSN",
-                    target_source="ETL_DSN",
+                    stage_source="PARENT_DB_OWNER_CONNECTION",
+                    target_source="PARENT_DB_OWNER_CONNECTION",
                 ),
             ),
         ):

@@ -1,0 +1,43 @@
+CREATE SCHEMA IF NOT EXISTS public;
+
+CREATE TABLE IF NOT EXISTS "public"."universities" (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL UNIQUE,
+  country VARCHAR(100),
+  url TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "public"."degree_programs" (
+  id SERIAL PRIMARY KEY,
+  university_id INTEGER NOT NULL REFERENCES "public"."universities"(id) ON DELETE CASCADE,
+  program_name VARCHAR(500) NOT NULL,
+  course_type VARCHAR(100),
+  is_online BOOLEAN DEFAULT FALSE,
+  source_url TEXT,
+  last_seen TIMESTAMP,
+  quality_flag VARCHAR(50) DEFAULT 'low',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "public"."tuition_patterns" (
+  id SERIAL PRIMARY KEY,
+  degree_level VARCHAR(50),
+  amount DECIMAL(10, 2),
+  currency VARCHAR(10),
+  fee_type VARCHAR(50) DEFAULT 'tuition',
+  tuition_type VARCHAR(30) DEFAULT 'unknown',
+  amount_min DECIMAL(10, 2),
+  amount_max DECIMAL(10, 2),
+  normalized_monthly_amount DECIMAL(10, 2),
+  normalization_note TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (degree_level, amount, currency, fee_type, tuition_type)
+);
+
+CREATE TABLE IF NOT EXISTS "public"."program_tuition_map" (
+  degree_program_id INTEGER NOT NULL REFERENCES "public"."degree_programs"(id) ON DELETE CASCADE,
+  tuition_pattern_id INTEGER NOT NULL REFERENCES "public"."tuition_patterns"(id) ON DELETE CASCADE,
+  PRIMARY KEY (degree_program_id, tuition_pattern_id)
+);

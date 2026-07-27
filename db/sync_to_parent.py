@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 ↑python3 で実行することを明示
@@ -24,7 +24,14 @@ import psycopg2
 from psycopg2 import Error
 from dotenv import load_dotenv
 
+from db.schema_config import get_public_schema, get_table_ref, set_search_path
+
 load_dotenv(encoding="utf-8-sig")
+
+UNIVERSITIES_TABLE = get_table_ref("UNIVERSITIES_TABLE")
+DEGREE_PROGRAMS_TABLE = get_table_ref("DEGREE_PROGRAMS_TABLE")
+TUITION_PATTERNS_TABLE = get_table_ref("TUITION_PATTERNS_TABLE")
+PROGRAM_TUITION_MAP_TABLE = get_table_ref("PROGRAM_TUITION_MAP_TABLE")
 
 
 def get_dev_db_params():
@@ -77,9 +84,10 @@ def create_parent_schema(parent_conn):
     """親ブランチにスキーマを作成（初回実行時）"""
     cursor = parent_conn.cursor()
     try:
+        set_search_path(cursor, get_public_schema())
         # テーブル作成
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS universities (
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {UNIVERSITIES_TABLE} (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255) NOT NULL UNIQUE,
                 country VARCHAR(100),
@@ -89,10 +97,10 @@ def create_parent_schema(parent_conn):
             );
         """)
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS degree_programs (
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {DEGREE_PROGRAMS_TABLE} (
                 id SERIAL PRIMARY KEY,
-                university_id INTEGER NOT NULL REFERENCES universities(id) ON DELETE CASCADE,
+                university_id INTEGER NOT NULL REFERENCES {UNIVERSITIES_TABLE}(id) ON DELETE CASCADE,
                 program_name VARCHAR(500) NOT NULL,
                 course_type VARCHAR(100),
                 is_online BOOLEAN DEFAULT FALSE,
@@ -103,8 +111,8 @@ def create_parent_schema(parent_conn):
             );
         """)#quality_flagは欠損の方が起きやすいから、lowから始める
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tuition_patterns (
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {TUITION_PATTERNS_TABLE} (
                 id SERIAL PRIMARY KEY,
                 degree_level VARCHAR(50),
                 amount DECIMAL(10, 2),
@@ -120,10 +128,10 @@ def create_parent_schema(parent_conn):
             );
         """)#decimalは、合計10桁、そのうち小数点以下が2桁という意味　floatは誤差が出やすいらしい
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS program_tuition_map (
-                degree_program_id INTEGER NOT NULL REFERENCES degree_programs(id) ON DELETE CASCADE,
-                tuition_pattern_id INTEGER NOT NULL REFERENCES tuition_patterns(id) ON DELETE CASCADE,
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {PROGRAM_TUITION_MAP_TABLE} (
+                degree_program_id INTEGER NOT NULL REFERENCES {DEGREE_PROGRAMS_TABLE}(id) ON DELETE CASCADE,
+                tuition_pattern_id INTEGER NOT NULL REFERENCES {TUITION_PATTERNS_TABLE}(id) ON DELETE CASCADE,
                 PRIMARY KEY (degree_program_id, tuition_pattern_id)
             );
         """)# ON DELETE CASCADE 親が消えたら自動で子も消えるという指定
@@ -140,14 +148,15 @@ def truncate_parent_tables(parent_conn):
     """親テーブルのデータを削除（外部キー制約を考慮）"""
     cursor = parent_conn.cursor()
     try:
+        set_search_path(cursor, get_public_schema())
         # 外部キー制約を一時的に無効化
         cursor.execute("SET CONSTRAINTS ALL DEFERRED;")
         
         # テーブル削除（順序重要）
-        cursor.execute("DELETE FROM program_tuition_map;")
-        cursor.execute("DELETE FROM tuition_patterns;")
-        cursor.execute("DELETE FROM degree_programs;")
-        cursor.execute("DELETE FROM universities;")
+        cursor.execute(f"DELETE FROM {PROGRAM_TUITION_MAP_TABLE};")
+        cursor.execute(f"DELETE FROM {TUITION_PATTERNS_TABLE};")
+        cursor.execute(f"DELETE FROM {DEGREE_PROGRAMS_TABLE};")
+        cursor.execute(f"DELETE FROM {UNIVERSITIES_TABLE};")
         
         # シーケンスもリセット（存在確認）
         try:
@@ -173,6 +182,7 @@ def copy_table(dev_conn, parent_conn, table_name):
     try:
         # 開発 DB からデータ読み込み
         dev_cursor = dev_conn.cursor()
+        set_search_path(dev_cursor, get_public_schema())
         dev_cursor.execute(f"SELECT * FROM {table_name};")
         rows = dev_cursor.fetchall()
         col_description = dev_cursor.description
@@ -184,6 +194,7 @@ def copy_table(dev_conn, parent_conn, table_name):
         
         # 親 DB へ INSERT
         parent_cursor = parent_conn.cursor()
+        set_search_path(parent_cursor, get_public_schema())
         
         # COPY コマンド使用（高速）らしい？
         # ただし簡易版として INSERT で実装
@@ -205,7 +216,7 @@ def copy_table(dev_conn, parent_conn, table_name):
 
 def verify_sync(dev_conn, parent_conn):
     """同期結果を検証"""
-    tables = ["universities", "degree_programs", "tuition_patterns", "program_tuition_map"]
+    tables = [UNIVERSITIES_TABLE, DEGREE_PROGRAMS_TABLE, TUITION_PATTERNS_TABLE, PROGRAM_TUITION_MAP_TABLE]
     
     print("\n📊 同期結果検証:")
     all_match = True
@@ -213,6 +224,8 @@ def verify_sync(dev_conn, parent_conn):
     for table in tables:
         dev_cursor = dev_conn.cursor()
         parent_cursor = parent_conn.cursor()
+        set_search_path(dev_cursor, get_public_schema())
+        set_search_path(parent_cursor, get_public_schema())
         
         dev_cursor.execute(f"SELECT COUNT(*) FROM {table};")
         dev_count = dev_cursor.fetchone()[0]
@@ -253,7 +266,7 @@ def main():
         # テーブルコピー（順序重要）
         print("\n📋 テーブルをコピー...")
         total_copied = 0
-        for table in ["universities", "degree_programs", "tuition_patterns", "program_tuition_map"]:
+        for table in [UNIVERSITIES_TABLE, DEGREE_PROGRAMS_TABLE, TUITION_PATTERNS_TABLE, PROGRAM_TUITION_MAP_TABLE]:
             total_copied += copy_table(dev_conn, parent_conn, table)
         
         # 検証
@@ -278,3 +291,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

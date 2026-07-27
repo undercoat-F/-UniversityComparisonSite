@@ -1,4 +1,6 @@
-CREATE TABLE IF NOT EXISTS seed_search_runs (
+CREATE SCHEMA IF NOT EXISTS observer;
+
+CREATE TABLE IF NOT EXISTS ${SEED_SEARCH_RUNS_TABLE} (
   id BIGSERIAL PRIMARY KEY,
   run_id BIGINT,
   source_stage TEXT NOT NULL DEFAULT 'seed_searcher',
@@ -12,17 +14,17 @@ CREATE TABLE IF NOT EXISTS seed_search_runs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-ALTER TABLE seed_search_runs
+ALTER TABLE ${SEED_SEARCH_RUNS_TABLE}
   ADD COLUMN IF NOT EXISTS run_id BIGINT;
 
-ALTER TABLE seed_search_runs
+ALTER TABLE ${SEED_SEARCH_RUNS_TABLE}
   ADD COLUMN IF NOT EXISTS source_stage TEXT NOT NULL DEFAULT 'seed_searcher';
 
 CREATE INDEX IF NOT EXISTS idx_seed_search_runs_source_domain
-  ON seed_search_runs(source_domain);
+  ON ${SEED_SEARCH_RUNS_TABLE}(source_domain);
 
 CREATE INDEX IF NOT EXISTS idx_seed_search_runs_run_id
-  ON seed_search_runs(run_id);
+  ON ${SEED_SEARCH_RUNS_TABLE}(run_id);
 
 CREATE INDEX IF NOT EXISTS idx_seed_search_runs_created_at
-  ON seed_search_runs(created_at DESC);
+  ON ${SEED_SEARCH_RUNS_TABLE}(created_at DESC);

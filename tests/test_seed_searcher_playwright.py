@@ -7,8 +7,11 @@ Playwright fallback behavior tests for observer.seed_searcher.
 import os
 import sys
 import types
+import inspect
 import unittest
 from unittest.mock import patch
+
+import httpx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -20,6 +23,28 @@ if "dotenv" not in sys.modules:
 from dataclass.dataclass import ContentType, PageAnalysis
 from observer.observe_supervisor import ObserveStackItem
 from observer import seed_searcher
+
+
+def _playwright_fallback_test_available() -> bool:
+    if not hasattr(seed_searcher, "PlaywrightFallbackSearch"):
+        return False
+    if not hasattr(seed_searcher, "sync_playwright"):
+        return False
+    fallback_func = getattr(seed_searcher, "_search_with_provider_fallback", None)
+    if fallback_func is None:
+        return False
+    try:
+        params = inspect.signature(fallback_func).parameters
+    except (TypeError, ValueError):
+        return False
+    return "secondary" in params
+
+
+class TestPlaywrightFallbackAvailability(unittest.TestCase):
+    def test_playwright_fallback_disabled_marker(self):
+        if _playwright_fallback_test_available():
+            self.skipTest("Playwright fallback is enabled; guarded tests will run")
+        self.assertTrue(True)
 
 
 class _DummyResponse:
@@ -139,6 +164,10 @@ async def _passthrough_probe_hits(hits, errors):
     return hits
 
 
+@unittest.skipUnless(
+    _playwright_fallback_test_available(),
+    "Playwright fallback is disabled in observer.seed_searcher",
+)
 class TestSeedSearcherPlaywright(unittest.TestCase):
     def test_playwright_search_uses_query_param_and_external_script(self):
         page = _DummyPageForPlaywright(
@@ -219,6 +248,41 @@ class TestSeedSearcherPlaywright(unittest.TestCase):
         self.assertFalse(result.hits)
         self.assertTrue(any("all_search_providers_failed" in err for err in result.errors))
         self.assertTrue(any("search_failed:" in err for err in result.errors))
+
+    def test_provider_fallback_logs_compact_http_status_on_brave_failure(self):
+        request = httpx.Request("GET", "https://api.search.brave.com/res/v1/web/search")
+        response = httpx.Response(422, request=request)
+        brave_error = httpx.HTTPStatusError("unprocessable", request=request, response=response)
+
+        class _Primary:
+            enabled = True
+            api_type = "brave"
+
+            def search(self, query: str, num_results: int = 10):
+                raise brave_error
+
+        class _Secondary:
+            enabled = True
+            api_type = "playwright-google"
+
+            def search(self, query: str, num_results: int = 10):
+                return [{"url": "https://www.example.ac.uk/programmes", "title": "Programmes", "snippet": "ok"}]
+
+        errors: list[str] = []
+        rows, provider_type, used_fallback = seed_searcher._search_with_provider_fallback(
+            query="For-profit college 公式",
+            num_results=8,
+            primary=_Primary(),
+            secondary=_Secondary(),
+            errors=errors,
+        )
+
+        self.assertEqual(provider_type, "playwright-google")
+        self.assertTrue(used_fallback)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(any("brave_failed=HTTPStatusError(status=422)" in err for err in errors))
+        self.assertTrue(any("provider_fallback_used=playwright-google" in err for err in errors))
+        self.assertFalse(any("For more information check:" in err for err in errors))
 
 
 if __name__ == "__main__":

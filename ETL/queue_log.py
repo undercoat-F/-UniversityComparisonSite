@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import time
@@ -8,6 +8,18 @@ try:
     import psycopg2
 except Exception:  # pragma: no cover - postgres is optional
     psycopg2 = None
+
+from db.schema_config import get_etl_schema, get_public_schema, get_table_ref, render_sql_template, set_search_path
+
+CRAWL_RUNS_TABLE = get_table_ref("CRAWL_RUNS_TABLE")
+CRAWL_QUEUE_STATE_TABLE = get_table_ref("CRAWL_QUEUE_STATE_TABLE")
+CRAWL_ATTEMPTS_TABLE = get_table_ref("CRAWL_ATTEMPTS_TABLE")
+CRAWL_EDGES_TABLE = get_table_ref("CRAWL_EDGES_TABLE")
+CRAWL_FAILURES_TABLE = get_table_ref("CRAWL_FAILURES_TABLE")
+CRAWL_TAG_KEYWORD_HITS_TABLE = get_table_ref("CRAWL_TAG_KEYWORD_HITS_TABLE")
+CRAWL_DOMAIN_TAG_SCORES_TABLE = get_table_ref("CRAWL_DOMAIN_TAG_SCORES_TABLE")
+CRAWL_TAG_CLASS_COUNTS_TABLE = get_table_ref("CRAWL_TAG_CLASS_COUNTS_TABLE")
+CRAWL_DOMAIN_CLASS_COUNTS_TABLE = get_table_ref("CRAWL_DOMAIN_CLASS_COUNTS_TABLE")
 
 class QueueLogStore:
     def __init__(
@@ -38,6 +50,8 @@ class QueueLogStore:
             raise RuntimeError("psycopg2 is not installed. Install psycopg2-binary.")
         self._conn = psycopg2.connect(self.pg_dsn)
         self._conn.autocommit = False
+        with self._conn.cursor() as cursor:
+            set_search_path(cursor, get_etl_schema(), get_public_schema())
         return self._conn
 
     def close(self) -> None:
@@ -48,7 +62,7 @@ class QueueLogStore:
 
     def init_db(self) -> None:
         with open(self.schema_path, "r", encoding="utf-8") as f:
-            schema_sql = f.read()
+            schema_sql = render_sql_template(f.read())
         conn = self._connect()
         cur = conn.cursor()
         try:
@@ -67,8 +81,8 @@ class QueueLogStore:
         cur = conn.cursor()
         try:
             cur.execute(
-                """
-                INSERT INTO crawl_runs (root_seed_count, notes)
+                f"""
+                INSERT INTO {CRAWL_RUNS_TABLE} (root_seed_count, notes)
                 VALUES (%s, %s)
                 RETURNING id
                 """,
@@ -92,8 +106,8 @@ class QueueLogStore:
         cur = conn.cursor()
         try:
             cur.execute(
-                """
-                UPDATE crawl_runs
+                f"""
+                UPDATE {CRAWL_RUNS_TABLE}
                 SET status = %s, finished_at = NOW(), notes = COALESCE(NULLIF(%s, ''), notes)
                     WHERE id = %s
                     """,
@@ -273,8 +287,8 @@ class QueueLogStore:
 
     def _write_queue_state(self, cur, p: dict[str, Any]) -> None:
         cur.execute(
-            """
-            INSERT INTO crawl_queue_state (
+            f"""
+            INSERT INTO {CRAWL_QUEUE_STATE_TABLE} (
                 run_id, url, parent_url, domain, depth, status,
                 fetch_method, retry_count, discovered_from,
                 status_code, last_error_type, last_error_message,
@@ -293,14 +307,14 @@ class QueueLogStore:
                 domain = EXCLUDED.domain,
                 depth = EXCLUDED.depth,
                 status = EXCLUDED.status,
-                fetch_method = COALESCE(EXCLUDED.fetch_method, crawl_queue_state.fetch_method),
+                fetch_method = COALESCE(EXCLUDED.fetch_method, {CRAWL_QUEUE_STATE_TABLE}.fetch_method),
                 retry_count = EXCLUDED.retry_count,
                 discovered_from = EXCLUDED.discovered_from,
                 status_code = EXCLUDED.status_code,
                 last_error_type = EXCLUDED.last_error_type,
                 last_error_message = EXCLUDED.last_error_message,
-                started_at = COALESCE(EXCLUDED.started_at, crawl_queue_state.started_at),
-                finished_at = COALESCE(EXCLUDED.finished_at, crawl_queue_state.finished_at),
+                started_at = COALESCE(EXCLUDED.started_at, {CRAWL_QUEUE_STATE_TABLE}.started_at),
+                finished_at = COALESCE(EXCLUDED.finished_at, {CRAWL_QUEUE_STATE_TABLE}.finished_at),
                 updated_at = NOW()
             """,
             (
@@ -325,8 +339,8 @@ class QueueLogStore:
     def _write_attempt(self, cur, p: dict[str, Any]) -> None:
         if self.failures_only:
             cur.execute(
-                """
-                INSERT INTO crawl_failures (
+                f"""
+                INSERT INTO {CRAWL_FAILURES_TABLE} (
                     run_id, url, domain, fetch_method, status_code, error_type, error_message, connection_log, created_at
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
@@ -345,7 +359,7 @@ class QueueLogStore:
             return
 
         cur.execute(
-            "SELECT id FROM crawl_queue_state WHERE run_id = %s AND url = %s",
+            f"SELECT id FROM {CRAWL_QUEUE_STATE_TABLE} WHERE run_id = %s AND url = %s",
             (p["run_id"], p["url"]),
         )
         row = cur.fetchone()
@@ -355,15 +369,15 @@ class QueueLogStore:
 
 
         cur.execute(
-            "SELECT COALESCE(MAX(attempt_no), 0) + 1 FROM crawl_attempts WHERE queue_state_id = %s",
+            f"SELECT COALESCE(MAX(attempt_no), 0) + 1 FROM {CRAWL_ATTEMPTS_TABLE} WHERE queue_state_id = %s",
             (queue_state_id,),
         )
         attempt_no = int(cur.fetchone()[0])
 
 
         cur.execute(
-            """
-            INSERT INTO crawl_attempts (
+            f"""
+            INSERT INTO {CRAWL_ATTEMPTS_TABLE} (
                 queue_state_id, attempt_no, fetch_method, ok, status_code,
                 error_type, error_message, final_url, response_bytes,
                 used_fallback, connection_log
@@ -388,8 +402,8 @@ class QueueLogStore:
 
     def _write_edge(self, cur, p: dict[str, Any]) -> None:
         cur.execute(
-            """
-            INSERT INTO crawl_edges (
+            f"""
+            INSERT INTO {CRAWL_EDGES_TABLE} (
                 run_id, parent_url, child_url, parent_domain, child_domain, depth, source
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -409,8 +423,8 @@ class QueueLogStore:
 
     def _write_tag_keyword_hit(self, cur, p: dict[str, Any]) -> None:
         cur.execute(
-            """
-            INSERT INTO crawl_tag_keyword_hits (
+            f"""
+            INSERT INTO {CRAWL_TAG_KEYWORD_HITS_TABLE} (
                 run_id, domain, url, tag_name, course_type, keyword,
                 hit_count, weight, weighted_score
             )
@@ -430,16 +444,16 @@ class QueueLogStore:
         )
 
         cur.execute(
-            """
-            INSERT INTO crawl_domain_tag_scores (
+            f"""
+            INSERT INTO {CRAWL_DOMAIN_TAG_SCORES_TABLE} (
                 run_id, domain, tag_name, course_type, keyword,
                 total_hits, total_weighted_score, updated_at
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT(run_id, domain, tag_name, course_type, keyword)
             DO UPDATE SET
-                total_hits = crawl_domain_tag_scores.total_hits + EXCLUDED.total_hits,
-                total_weighted_score = crawl_domain_tag_scores.total_weighted_score + EXCLUDED.total_weighted_score,
+                total_hits = {CRAWL_DOMAIN_TAG_SCORES_TABLE}.total_hits + EXCLUDED.total_hits,
+                total_weighted_score = {CRAWL_DOMAIN_TAG_SCORES_TABLE}.total_weighted_score + EXCLUDED.total_weighted_score,
                 updated_at = NOW()
             """,
             (
@@ -456,8 +470,8 @@ class QueueLogStore:
 
     def _write_tag_class_count(self, cur, p: dict[str, Any]) -> None:
         cur.execute(
-            """
-            INSERT INTO crawl_tag_class_counts (
+            f"""
+            INSERT INTO {CRAWL_TAG_CLASS_COUNTS_TABLE} (
                 run_id, domain, url, tag_name, class_name, occurrence_count
             )
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -473,14 +487,14 @@ class QueueLogStore:
         )
 
         cur.execute(
-            """
-            INSERT INTO crawl_domain_class_counts (
+            f"""
+            INSERT INTO {CRAWL_DOMAIN_CLASS_COUNTS_TABLE} (
                 run_id, domain, tag_name, class_name, total_occurrences, updated_at
             )
             VALUES (%s, %s, %s, %s, %s, NOW())
             ON CONFLICT(run_id, domain, tag_name, class_name)
             DO UPDATE SET
-                total_occurrences = crawl_domain_class_counts.total_occurrences + EXCLUDED.total_occurrences,
+                total_occurrences = {CRAWL_DOMAIN_CLASS_COUNTS_TABLE}.total_occurrences + EXCLUDED.total_occurrences,
                 updated_at = NOW()
             """,
             (
@@ -564,3 +578,4 @@ class QueueLogStore:
             return url.split("//", 1)[1].split("/", 1)[0]
         except Exception:
             return ""
+

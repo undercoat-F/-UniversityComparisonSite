@@ -195,6 +195,42 @@ class TestExtractCandidateLinesHTML(unittest.TestCase):
                 self.assertTrue(any("東京大学" in line for line in lines))
                 self.assertTrue(any("京都大学" in line for line in lines))
 
+        def test_extracts_h3_inside_div_cards(self):
+                page = make_html_page(
+                        """
+                        <html><body>
+                            <div class='result-card'>
+                                <h3>北海道医療大学</h3>
+                                <p>医療系大学</p>
+                            </div>
+                            <div class='result-card'>
+                                <h3>日本女子大学</h3>
+                                <p>私立大学</p>
+                            </div>
+                        </body></html>
+                        """
+                )
+
+                lines = extract_candidate_lines(page)
+
+                self.assertTrue(any("北海道医療大学" in line for line in lines))
+                self.assertTrue(any("日本女子大学" in line for line in lines))
+
+        def test_extracts_from_anchor_title_when_text_empty(self):
+            page = make_html_page(
+                """
+                <html><body>
+                    <a href='/provider/1' title='Australian Catholic University'></a>
+                    <a href='/provider/2' aria-label='Monash University'></a>
+                </body></html>
+                """
+             )
+
+            lines = extract_candidate_lines(page)
+
+            self.assertTrue(any("Australian Catholic University" in line for line in lines))
+            self.assertTrue(any("Monash University" in line for line in lines))
+
 
 class TestPaginationExtractionAndObserve(unittest.TestCase):
         def test_extract_pagination_actions_from_button_postback(self):

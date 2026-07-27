@@ -20,6 +20,57 @@ def _env_flag(name: str, default: bool) -> bool:
         return default
     return raw.strip().lower() not in {"0", "false", "no", "off", ""}
 
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+async def _seed_sitemaps_with_limits(sites: list[SiteState]) -> tuple[int, int]:
+    seeding_concurrency = _env_int("ETL_SITEMAP_SEED_CONCURRENCY", 12)
+    per_site_timeout = _env_int("ETL_SITEMAP_SEED_SITE_TIMEOUT_SEC", 90)
+    progress_every = _env_int("ETL_SITEMAP_SEED_PROGRESS_EVERY", 20)
+
+    sem = asyncio.Semaphore(seeding_concurrency)
+
+    async def _one(site: SiteState):
+        async with sem:
+            try:
+                await asyncio.wait_for(seed_sitemap_candidates(site), timeout=per_site_timeout)
+                return site.domain, None
+            except Exception as exc:  # noqa: BLE001
+                return site.domain, exc
+
+    tasks = [asyncio.create_task(_one(site)) for site in sites]
+    completed = 0
+    failed = 0
+    by_domain = {site.domain: site for site in sites}
+
+    for task in asyncio.as_completed(tasks):
+        domain, exc = await task
+        completed += 1
+        if exc is not None:
+            failed += 1
+            site = by_domain.get(domain)
+            msg = f"sitemap_seed_failed domain={domain}: {type(exc).__name__}: {exc}"
+            if site is not None:
+                site.errors.append(msg)
+            print(f"[DISPATCHER][WARN] {msg}", flush=True)
+
+        if completed % progress_every == 0 or completed == len(tasks):
+            print(
+                f"[DISPATCHER] sitemap seeding progress done={completed}/{len(tasks)} failed={failed}",
+                flush=True,
+            )
+
+    seeded_total = sum(len(site.sitemap_candidates) for site in sites)
+    return seeded_total, failed
+
 def build_site_states(targets: Iterable[tuple[str, int]]) -> list[SiteState]:
     grouped: dict[str, list[tuple[str, int]]] = {}
     for url, depth in targets:
@@ -58,12 +109,21 @@ async def run_dispatcher(
     if queue_log_enabled:
         queue_log_batch_size = int(os.getenv("QUEUE_LOG_BATCH_SIZE", "200"))
         queue_log_failures_only = os.getenv("QUEUE_LOG_FAILURES_ONLY", "1") not in {"0", "false", "False"}
-        queue_log_pg_dsn = os.getenv("QUEUE_LOG_POSTGRES_DSN", "").strip()
+        queue_log_pg_dsn = os.getenv("PARENT_DB_OWNER_CONNECTION", "").strip()
+        if not queue_log_pg_dsn:
+            required = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
+            if all((os.getenv(name, "").strip() for name in required)):
+                host = os.getenv("DB_HOST", "").strip()
+                dbname = os.getenv("DB_NAME", "").strip()
+                user = os.getenv("DB_USER", "").strip()
+                password = os.getenv("DB_PASSWORD", "").strip()
+                port = os.getenv("DB_PORT", "5432").strip() or "5432"
+                queue_log_pg_dsn = f"postgresql://{user}:{password}@{host}:{port}/{dbname}?sslmode=require"
         schema_path = os.getenv("QUEUE_LOG_SCHEMA_PATH", os.path.join("ETL", "queue_log_schema.sql"))
 
         if not queue_log_pg_dsn:
             print(
-                "[QUEUE_LOG] disabled: QUEUE_LOG_POSTGRES_DSN is not set",
+                "[QUEUE_LOG] disabled: PARENT_DB_OWNER_CONNECTION or DB_* is not set",
                 flush=True,
             )
             queue_log_enabled = False
@@ -99,10 +159,10 @@ async def run_dispatcher(
         run_notes = ""
         try:
             print("[DISPATCHER] seeding sitemap candidates...", flush=True)
-            await asyncio.gather(*(seed_sitemap_candidates(site) for site in sites))
-            seeded_total = sum(len(site.sitemap_candidates) for site in sites)
+            seeded_total, seeding_failed = await _seed_sitemaps_with_limits(sites)
             print(
-                f"[DISPATCHER] sitemap seeding done candidates={seeded_total} elapsed={int(time.monotonic() - started_at)}s",
+                "[DISPATCHER] sitemap seeding done "
+                f"candidates={seeded_total} failed={seeding_failed} elapsed={int(time.monotonic() - started_at)}s",
                 flush=True,
             )
 

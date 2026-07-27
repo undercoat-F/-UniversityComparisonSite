@@ -33,6 +33,7 @@ URLTask
 """
 import re
 import asyncio
+import os
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -48,6 +49,22 @@ from xml.etree import ElementTree as ET
 from dataclass.dataclass import CrawlAttempt, FetchResult, SiteState, URLTask
 
 DEFAULT_TIMEOUT = 30
+
+
+def _env_int(name: str, default: int, minimum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
+SITEMAP_SEED_MAX_SECONDS = _env_int("ETL_SITEMAP_SEED_MAX_SECONDS", 60, 1)
+SITEMAP_SEED_MAX_SITEMAPS = _env_int("ETL_SITEMAP_SEED_MAX_SITEMAPS", 40, 1)
+
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -788,7 +805,15 @@ def _extract_sitemap_directives(robots_text: str) -> list[str]:
     return sitemap_urls
 
 
-def _collect_sitemap_urls(xml_text: str, allowed_netloc: str, visited_sitemaps: set[str]) -> list[str]:
+def _collect_sitemap_urls(
+    xml_text: str,
+    allowed_netloc: str,
+    visited_sitemaps: set[str],
+    *,
+    started_at: float,
+    max_duration_sec: int,
+    max_sitemaps: int,
+) -> list[str]:
     root = ET.fromstring(xml_text)
     tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
     ns = root.tag[: root.tag.rfind("}") + 1] if "}" in root.tag else ""
@@ -806,6 +831,11 @@ def _collect_sitemap_urls(xml_text: str, allowed_netloc: str, visited_sitemaps: 
     if tag == "sitemapindex":
         urls = []
         for sitemap_elem in root.findall(f"{ns}sitemap"):
+            if time.perf_counter() - started_at >= max_duration_sec:
+                break
+            if len(visited_sitemaps) >= max_sitemaps:
+                break
+
             loc_elem = sitemap_elem.find(f"{ns}loc")
             if loc_elem is None or not loc_elem.text:
                 continue
@@ -816,7 +846,16 @@ def _collect_sitemap_urls(xml_text: str, allowed_netloc: str, visited_sitemaps: 
             try:
                 response = requests.get(sitemap_url, headers=DEFAULT_HEADERS, timeout=15)
                 response.raise_for_status()
-                urls.extend(_collect_sitemap_urls(response.text, allowed_netloc, visited_sitemaps))
+                urls.extend(
+                    _collect_sitemap_urls(
+                        response.text,
+                        allowed_netloc,
+                        visited_sitemaps,
+                        started_at=started_at,
+                        max_duration_sec=max_duration_sec,
+                        max_sitemaps=max_sitemaps,
+                    )
+                )
             except Exception:
                 continue
         return urls
@@ -842,6 +881,10 @@ async def seed_sitemap_candidates(site: SiteState) -> list[str]:
     default_sitemaps = [f"https://{site.domain}/sitemap.xml"]
 
     def _load_candidates() -> list[str]:
+        started_at = time.perf_counter()
+        truncated_by_time = False
+        truncated_by_count = False
+
         sitemap_urls: list[str] = []
         try:
             robots_resp = requests.get(robots_url, headers=DEFAULT_HEADERS, timeout=10)
@@ -858,14 +901,45 @@ async def seed_sitemap_candidates(site: SiteState) -> list[str]:
         collected_urls = []
         visited_sitemaps = set(site.sitemap_urls)
         for sitemap_url in site.sitemap_urls:
+            if time.perf_counter() - started_at >= SITEMAP_SEED_MAX_SECONDS:
+                truncated_by_time = True
+                break
+            if len(visited_sitemaps) >= SITEMAP_SEED_MAX_SITEMAPS:
+                truncated_by_count = True
+                break
+
             try:
                 response = requests.get(sitemap_url, headers=DEFAULT_HEADERS, timeout=15)
                 response.raise_for_status()
                 collected_urls.extend(
-                    _collect_sitemap_urls(response.text, site.domain, visited_sitemaps)
+                    _collect_sitemap_urls(
+                        response.text,
+                        site.domain,
+                        visited_sitemaps,
+                        started_at=started_at,
+                        max_duration_sec=SITEMAP_SEED_MAX_SECONDS,
+                        max_sitemaps=SITEMAP_SEED_MAX_SITEMAPS,
+                    )
                 )
+                if time.perf_counter() - started_at >= SITEMAP_SEED_MAX_SECONDS:
+                    truncated_by_time = True
+                    break
+                if len(visited_sitemaps) >= SITEMAP_SEED_MAX_SITEMAPS:
+                    truncated_by_count = True
+                    break
             except Exception:
                 continue
+
+        if truncated_by_time:
+            print(
+                f"[SITEMAP] timeout cap reached domain={site.domain} cap={SITEMAP_SEED_MAX_SECONDS}s",
+                flush=True,
+            )
+        if truncated_by_count:
+            print(
+                f"[SITEMAP] sitemap-count cap reached domain={site.domain} cap={SITEMAP_SEED_MAX_SITEMAPS}",
+                flush=True,
+            )
 
         return _select_likely_sitemap_candidates(collected_urls)
 

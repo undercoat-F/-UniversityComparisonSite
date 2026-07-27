@@ -1,6 +1,7 @@
 -- PostgreSQL 用 seed_urls テーブルスキーマ
+CREATE SCHEMA IF NOT EXISTS observer;
 
-CREATE TABLE IF NOT EXISTS seed_urls (
+CREATE TABLE IF NOT EXISTS ${SEED_URLS_TABLE} (
   id SERIAL PRIMARY KEY,
   country VARCHAR(50) NOT NULL,
   domain VARCHAR(255) NOT NULL,
@@ -12,5 +13,5 @@ CREATE TABLE IF NOT EXISTS seed_urls (
   UNIQUE(domain, root_url)
 );
 
-CREATE INDEX IF NOT EXISTS idx_seed_urls_enabled ON seed_urls(enabled);
-CREATE INDEX IF NOT EXISTS idx_seed_urls_domain ON seed_urls(domain);
+CREATE INDEX IF NOT EXISTS idx_seed_urls_enabled ON ${SEED_URLS_TABLE}(enabled);
+CREATE INDEX IF NOT EXISTS idx_seed_urls_domain ON ${SEED_URLS_TABLE}(domain);

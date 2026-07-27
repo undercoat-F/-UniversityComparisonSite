@@ -1,19 +1,27 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 CSVファイルをPostgreSQLに投入するスクリプト（関数型）
 スキーマ作成 -> CSV読み込み -> 正規形でINSERT/UPDATE
 """
 
-import csv
 import os
-from pathlib import Path
 
 import psycopg2
 from psycopg2 import Error, sql
+from psycopg2.extras import execute_values
 from dotenv import load_dotenv
 
+from db.schema_config import get_table_ref
+
 load_dotenv(encoding="utf-8-sig")
+
+BATCH_SIZE_ENV = "DB_SAVER_BATCH_SIZE"
+BATCH_SIZE_DEFAULT = 100
+UNIVERSITIES_TABLE = get_table_ref("UNIVERSITIES_TABLE")
+DEGREE_PROGRAMS_TABLE = get_table_ref("DEGREE_PROGRAMS_TABLE")
+TUITION_PATTERNS_TABLE = get_table_ref("TUITION_PATTERNS_TABLE")
+PROGRAM_TUITION_MAP_TABLE = get_table_ref("PROGRAM_TUITION_MAP_TABLE")
 
 
 def require_env(keys):
@@ -106,8 +114,8 @@ def create_schema(conn):
 
     try:
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS universities (
+            f"""
+            CREATE TABLE IF NOT EXISTS {UNIVERSITIES_TABLE} (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255) NOT NULL UNIQUE,
                 country VARCHAR(100),
@@ -119,10 +127,10 @@ def create_schema(conn):
         )
 
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS degree_programs (
+            f"""
+            CREATE TABLE IF NOT EXISTS {DEGREE_PROGRAMS_TABLE} (
                 id SERIAL PRIMARY KEY,
-                university_id INTEGER NOT NULL REFERENCES universities(id) ON DELETE CASCADE,
+                university_id INTEGER NOT NULL REFERENCES {UNIVERSITIES_TABLE}(id) ON DELETE CASCADE,
                 program_name VARCHAR(500) NOT NULL,
                 course_type VARCHAR(100),
                 is_online BOOLEAN DEFAULT FALSE,
@@ -135,8 +143,8 @@ def create_schema(conn):
         )
 
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tuition_patterns (
+            f"""
+            CREATE TABLE IF NOT EXISTS {TUITION_PATTERNS_TABLE} (
                 id SERIAL PRIMARY KEY,
                 degree_level VARCHAR(50),
                 amount DECIMAL(10, 2),
@@ -154,12 +162,12 @@ def create_schema(conn):
         )
 
         # 既存DBを段階移行できるよう、新列を追加してから制約を置き換える。
-        cursor.execute("ALTER TABLE tuition_patterns ADD COLUMN IF NOT EXISTS tuition_type VARCHAR(30) DEFAULT 'unknown';")
-        cursor.execute("ALTER TABLE tuition_patterns ADD COLUMN IF NOT EXISTS amount_min DECIMAL(10, 2);")
-        cursor.execute("ALTER TABLE tuition_patterns ADD COLUMN IF NOT EXISTS amount_max DECIMAL(10, 2);")
-        cursor.execute("ALTER TABLE tuition_patterns ADD COLUMN IF NOT EXISTS normalized_monthly_amount DECIMAL(10, 2);")
-        cursor.execute("ALTER TABLE tuition_patterns ADD COLUMN IF NOT EXISTS normalization_note TEXT;")
-        cursor.execute("UPDATE tuition_patterns SET tuition_type = 'unknown' WHERE tuition_type IS NULL;")
+        cursor.execute(f"ALTER TABLE {TUITION_PATTERNS_TABLE} ADD COLUMN IF NOT EXISTS tuition_type VARCHAR(30) DEFAULT 'unknown';")
+        cursor.execute(f"ALTER TABLE {TUITION_PATTERNS_TABLE} ADD COLUMN IF NOT EXISTS amount_min DECIMAL(10, 2);")
+        cursor.execute(f"ALTER TABLE {TUITION_PATTERNS_TABLE} ADD COLUMN IF NOT EXISTS amount_max DECIMAL(10, 2);")
+        cursor.execute(f"ALTER TABLE {TUITION_PATTERNS_TABLE} ADD COLUMN IF NOT EXISTS normalized_monthly_amount DECIMAL(10, 2);")
+        cursor.execute(f"ALTER TABLE {TUITION_PATTERNS_TABLE} ADD COLUMN IF NOT EXISTS normalization_note TEXT;")
+        cursor.execute(f"UPDATE {TUITION_PATTERNS_TABLE} SET tuition_type = 'unknown' WHERE tuition_type IS NULL;")
         cursor.execute(
             """
             DO $$
@@ -169,37 +177,37 @@ def create_schema(conn):
                     WHERE table_name='tuition_patterns'
                       AND constraint_name='tuition_patterns_degree_level_amount_currency_fee_type_key'
                 ) THEN
-                    ALTER TABLE tuition_patterns
+                    ALTER TABLE {TUITION_PATTERNS_TABLE}
                     DROP CONSTRAINT tuition_patterns_degree_level_amount_currency_fee_type_key;
                 END IF;
             END $$;
             """
         )
         cursor.execute(
-            """
+            f"""
             CREATE UNIQUE INDEX IF NOT EXISTS uq_tuition_patterns_v2
-            ON tuition_patterns (degree_level, amount, currency, fee_type, tuition_type);
+            ON {TUITION_PATTERNS_TABLE} (degree_level, amount, currency, fee_type, tuition_type);
             """
         )
 
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS program_tuition_map (
-                degree_program_id INTEGER NOT NULL REFERENCES degree_programs(id) ON DELETE CASCADE,
-                tuition_pattern_id INTEGER NOT NULL REFERENCES tuition_patterns(id) ON DELETE CASCADE,
+            f"""
+            CREATE TABLE IF NOT EXISTS {PROGRAM_TUITION_MAP_TABLE} (
+                degree_program_id INTEGER NOT NULL REFERENCES {DEGREE_PROGRAMS_TABLE}(id) ON DELETE CASCADE,
+                tuition_pattern_id INTEGER NOT NULL REFERENCES {TUITION_PATTERNS_TABLE}(id) ON DELETE CASCADE,
                 PRIMARY KEY (degree_program_id, tuition_pattern_id)
             );
             """
         )
 
         # 既存データと今後のUPSERT整合性を取るため、NULLを埋める。
-        cursor.execute("UPDATE degree_programs SET source_url = '' WHERE source_url IS NULL;")
-        cursor.execute("UPDATE degree_programs SET course_type = '' WHERE course_type IS NULL;")
-        cursor.execute("UPDATE degree_programs SET is_online = FALSE WHERE is_online IS NULL;")
+        cursor.execute(f"UPDATE {DEGREE_PROGRAMS_TABLE} SET source_url = '' WHERE source_url IS NULL;")
+        cursor.execute(f"UPDATE {DEGREE_PROGRAMS_TABLE} SET course_type = '' WHERE course_type IS NULL;")
+        cursor.execute(f"UPDATE {DEGREE_PROGRAMS_TABLE} SET is_online = FALSE WHERE is_online IS NULL;")
 
         # 既存データに重複があるとUNIQUE INDEX作成に失敗するため先に正規化する。
         cursor.execute(
-            """
+            f"""
             WITH ranked AS (
                 SELECT
                     id,
@@ -207,31 +215,31 @@ def create_schema(conn):
                         PARTITION BY university_id, source_url, program_name, course_type, is_online
                         ORDER BY id
                     ) AS rn
-                FROM degree_programs
+                FROM {DEGREE_PROGRAMS_TABLE}
             )
-            DELETE FROM degree_programs d
+            DELETE FROM {DEGREE_PROGRAMS_TABLE} d
             USING ranked r
             WHERE d.id = r.id AND r.rn > 1;
             """
         )
 
-        cursor.execute("ALTER TABLE degree_programs ALTER COLUMN source_url SET DEFAULT '';")
-        cursor.execute("ALTER TABLE degree_programs ALTER COLUMN course_type SET DEFAULT '';")
-        cursor.execute("ALTER TABLE degree_programs ALTER COLUMN is_online SET DEFAULT FALSE;")
+        cursor.execute(f"ALTER TABLE {DEGREE_PROGRAMS_TABLE} ALTER COLUMN source_url SET DEFAULT '';")
+        cursor.execute(f"ALTER TABLE {DEGREE_PROGRAMS_TABLE} ALTER COLUMN course_type SET DEFAULT '';")
+        cursor.execute(f"ALTER TABLE {DEGREE_PROGRAMS_TABLE} ALTER COLUMN is_online SET DEFAULT FALSE;")
 
         # URL再探索時の重複制御に使う自然キー。
         cursor.execute(
-            """
+            f"""
             CREATE UNIQUE INDEX IF NOT EXISTS uq_degree_program_natural_idx
-            ON degree_programs (university_id, source_url, program_name, course_type, is_online);
+            ON {DEGREE_PROGRAMS_TABLE} (university_id, source_url, program_name, course_type, is_online);
             """
         )
 
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_uni_name ON universities(name);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_prog_uni_id ON degree_programs(university_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_map_prog_id ON program_tuition_map(degree_program_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_map_pattern_id ON program_tuition_map(tuition_pattern_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_pattern_level ON tuition_patterns(degree_level);")
+        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_uni_name ON {UNIVERSITIES_TABLE}(name);")
+        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_prog_uni_id ON {DEGREE_PROGRAMS_TABLE}(university_id);")
+        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_map_prog_id ON {PROGRAM_TUITION_MAP_TABLE}(degree_program_id);")
+        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_map_pattern_id ON {PROGRAM_TUITION_MAP_TABLE}(tuition_pattern_id);")
+        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_pattern_level ON {TUITION_PATTERNS_TABLE}(degree_level);")
 
         conn.commit()
         print("スキーマ作成/更新完了")
@@ -269,259 +277,296 @@ def parse_optional_timestamp(raw):
     return text
 
 
-def insert_universities_from_csv(conn, csv_path):
-    """Universities CSV を投入し、csv_id -> db_id の対応を返す。"""
+def _env_int(name, default):
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _chunked(items, size):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def _insert_universities_rows(conn, rows):
     cursor = conn.cursor()
     inserted = 0
     id_map = {}
-
     try:
-        with open(csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row.get("name", "").strip().startswith("#"):
-                    continue
+        payload = []
+        for row in rows:
+            csv_id = str(row.get("id", "")).strip()
+            name = str(row.get("name", "")).strip()
+            if not name:
+                continue
+            country = str(row.get("country", "")).strip() or None
+            url = str(row.get("url", "")).strip() or None
+            created_at = parse_optional_timestamp(row.get("created_at", ""))
+            payload.append((csv_id, name, country, url, created_at))
 
-                csv_id = str(row.get("id", "")).strip()
-                name = row.get("name", "").strip()
-                if not name:
-                    continue
-
-                country = row.get("country", "").strip() or None
-                url = row.get("url", "").strip() or None
-                created_at = parse_optional_timestamp(row.get("created_at", ""))
-
-                cursor.execute(
-                    """
-                    INSERT INTO universities (name, country, url, created_at, updated_at)
-                    VALUES (%s, %s, %s, COALESCE(%s::timestamp, NOW()), NOW())
-                    ON CONFLICT (name) DO UPDATE SET
-                        country = EXCLUDED.country,
-                        url = EXCLUDED.url,
-                        updated_at = NOW()
-                    RETURNING id;
-                    """,
-                    (name, country, url, created_at),
-                )
-                db_id = cursor.fetchone()[0]
-                id_map[csv_id] = db_id
-                inserted += 1
+        batch_size = max(1, _env_int(BATCH_SIZE_ENV, BATCH_SIZE_DEFAULT))
+        sql_stmt = f"""
+            WITH src(csv_id, name, country, url, created_at) AS (VALUES %s),
+            upsert AS (
+            INSERT INTO {UNIVERSITIES_TABLE} (name, country, url, created_at, updated_at)
+                SELECT
+                    src.name,
+                    src.country,
+                    src.url,
+                    COALESCE(src.created_at::timestamp, NOW()),
+                    NOW()
+                FROM src
+                ON CONFLICT (name) DO UPDATE SET
+                    country = EXCLUDED.country,
+                    url = EXCLUDED.url,
+                    updated_at = NOW()
+                RETURNING id, name
+            )
+            SELECT src.csv_id, upsert.id
+            FROM src
+            JOIN upsert ON upsert.name = src.name;
+        """
+        for chunk in _chunked(payload, batch_size):
+            execute_values(cursor, sql_stmt, chunk)
+            for csv_id, db_id in cursor.fetchall():
+                id_map[str(csv_id)] = int(db_id)
+            inserted += len(chunk)
 
         conn.commit()
-        print(f"universities: {inserted}件投入")
         return inserted, id_map
-    except Error as e:
-        print(f"universities CSV投入エラー: {e}")
+    except Error:
         conn.rollback()
-        return 0, {}
+        raise
     finally:
         cursor.close()
 
 
-def insert_programs_from_csv(conn, csv_path, university_id_map):
-    """Degree Programs CSV を投入し、csv_id -> db_id の対応を返す。"""
+def _insert_programs_rows(conn, rows, university_id_map):
     cursor = conn.cursor()
     inserted = 0
     skipped = 0
     id_map = {}
-
     try:
-        with open(csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row.get("program_name", "").strip().startswith("#"):
-                    continue
+        payload = []
+        for row in rows:
+            csv_id = str(row.get("id", "")).strip()
+            csv_uni_id = str(row.get("university_id", "")).strip()
+            db_uni_id = university_id_map.get(csv_uni_id)
+            if db_uni_id is None:
+                skipped += 1
+                continue
 
-                csv_id = str(row.get("id", "")).strip()
-                csv_uni_id = str(row.get("university_id", "")).strip()
-                db_uni_id = university_id_map.get(csv_uni_id)
+            program_name = str(row.get("program_name", "")).strip()
+            if not program_name:
+                skipped += 1
+                continue
 
-                if db_uni_id is None:
-                    skipped += 1
-                    continue
-
-                program_name = row.get("program_name", "").strip()
-                if not program_name:
-                    skipped += 1
-                    continue
-
-                course_type = row.get("course_type", "").strip()
-                is_online = parse_bool(row.get("is_online", "0"))
-                source_url = row.get("source_url", "").strip()
-                last_seen = parse_optional_timestamp(row.get("last_seen", ""))
-                quality_flag = row.get("quality_flag", "high").strip() or "high"
-
-                cursor.execute(
-                    """
-                    INSERT INTO degree_programs
-                    (university_id, program_name, course_type, is_online, source_url, last_seen, quality_flag)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (university_id, source_url, program_name, course_type, is_online)
-                    DO UPDATE SET
-                        last_seen = EXCLUDED.last_seen,
-                        quality_flag = EXCLUDED.quality_flag
-                    RETURNING id;
-                    """,
-                    (db_uni_id, program_name, course_type, is_online, source_url, last_seen, quality_flag),
+            course_type = str(row.get("course_type", "")).strip()
+            is_online = parse_bool(row.get("is_online", "0"))
+            source_url = str(row.get("source_url", "")).strip()
+            last_seen = parse_optional_timestamp(row.get("last_seen", ""))
+            quality_flag = str(row.get("quality_flag", "high")).strip() or "high"
+            payload.append(
+                (
+                    csv_id,
+                    int(db_uni_id),
+                    program_name,
+                    course_type,
+                    bool(is_online),
+                    source_url,
+                    last_seen,
+                    quality_flag,
                 )
-                db_id = cursor.fetchone()[0]
-                id_map[csv_id] = db_id
-                inserted += 1
+            )
+
+        batch_size = max(1, _env_int(BATCH_SIZE_ENV, BATCH_SIZE_DEFAULT))
+        sql_stmt = f"""
+            WITH src(
+                csv_id,
+                university_id,
+                program_name,
+                course_type,
+                is_online,
+                source_url,
+                last_seen,
+                quality_flag
+            ) AS (VALUES %s),
+            upsert AS (
+                INSERT INTO {DEGREE_PROGRAMS_TABLE}
+                (university_id, program_name, course_type, is_online, source_url, last_seen, quality_flag)
+                SELECT
+                    src.university_id,
+                    src.program_name,
+                    src.course_type,
+                    src.is_online,
+                    src.source_url,
+                    src.last_seen::timestamp,
+                    src.quality_flag
+                FROM src
+                ON CONFLICT (university_id, source_url, program_name, course_type, is_online)
+                DO UPDATE SET
+                    last_seen = EXCLUDED.last_seen,
+                    quality_flag = EXCLUDED.quality_flag
+                RETURNING id, university_id, source_url, program_name, course_type, is_online
+            )
+            SELECT src.csv_id, upsert.id
+            FROM src
+            JOIN upsert
+                ON upsert.university_id = src.university_id
+               AND upsert.source_url = src.source_url
+               AND upsert.program_name = src.program_name
+               AND upsert.course_type = src.course_type
+               AND upsert.is_online = src.is_online;
+        """
+        for chunk in _chunked(payload, batch_size):
+            execute_values(cursor, sql_stmt, chunk)
+            for csv_id, db_id in cursor.fetchall():
+                id_map[str(csv_id)] = int(db_id)
+            inserted += len(chunk)
 
         conn.commit()
-        print(f"degree_programs: {inserted}件投入, {skipped}件スキップ")
-        return inserted, id_map
-    except Error as e:
-        print(f"degree_programs CSV投入エラー: {e}")
+        return inserted, skipped, id_map
+    except Error:
         conn.rollback()
-        return 0, {}
+        raise
     finally:
         cursor.close()
 
 
-def insert_patterns_from_csv(conn, csv_path):
-    """Tuition Patterns CSV を投入し、csv_id -> db_id の対応を返す。"""
+def _insert_patterns_rows(conn, rows):
     cursor = conn.cursor()
     inserted = 0
     id_map = {}
-
     try:
-        with open(csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                csv_id = str(row.get("id", "")).strip()
-                degree_level = row.get("degree_level", "").strip() or None
-                amount = parse_optional_float(row.get("amount", ""))
-                currency = row.get("currency", "").strip() or None
-                fee_type = row.get("fee_type", "tuition").strip() or "tuition"
-                tuition_type = row.get("tuition_type", "unknown").strip() or "unknown"
-                amount_min = parse_optional_float(row.get("amount_min", ""))
-                amount_max = parse_optional_float(row.get("amount_max", ""))
-                normalized_monthly_amount = parse_optional_float(row.get("normalized_monthly_amount", ""))
-                normalization_note = row.get("normalization_note", "unknown_not_normalized").strip() or "unknown_not_normalized"
-
-                cursor.execute(
-                    """
-                    INSERT INTO tuition_patterns
-                    (degree_level, amount, currency, fee_type, tuition_type, amount_min, amount_max, normalized_monthly_amount, normalization_note)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (degree_level, amount, currency, fee_type, tuition_type)
-                    DO UPDATE SET
-                        amount_min = EXCLUDED.amount_min,
-                        amount_max = EXCLUDED.amount_max,
-                        normalized_monthly_amount = EXCLUDED.normalized_monthly_amount,
-                        normalization_note = EXCLUDED.normalization_note
-                    RETURNING id;
-                    """,
-                    (
-                        degree_level,
-                        amount,
-                        currency,
-                        fee_type,
-                        tuition_type,
-                        amount_min,
-                        amount_max,
-                        normalized_monthly_amount,
-                        normalization_note,
-                    ),
+        payload = []
+        for row in rows:
+            csv_id = str(row.get("id", "")).strip()
+            degree_level = str(row.get("degree_level", "")).strip() or None
+            amount = parse_optional_float(row.get("amount", ""))
+            currency = str(row.get("currency", "")).strip() or None
+            fee_type = str(row.get("fee_type", "tuition")).strip() or "tuition"
+            tuition_type = str(row.get("tuition_type", "unknown")).strip() or "unknown"
+            amount_min = parse_optional_float(row.get("amount_min", ""))
+            amount_max = parse_optional_float(row.get("amount_max", ""))
+            normalized_monthly_amount = parse_optional_float(row.get("normalized_monthly_amount", ""))
+            normalization_note = str(row.get("normalization_note", "unknown_not_normalized")).strip() or "unknown_not_normalized"
+            payload.append(
+                (
+                    csv_id,
+                    degree_level,
+                    amount,
+                    currency,
+                    fee_type,
+                    tuition_type,
+                    amount_min,
+                    amount_max,
+                    normalized_monthly_amount,
+                    normalization_note,
                 )
-                db_id = cursor.fetchone()[0]
-                id_map[csv_id] = db_id
-                inserted += 1
+            )
+
+        batch_size = max(1, _env_int(BATCH_SIZE_ENV, BATCH_SIZE_DEFAULT))
+        sql_stmt = f"""
+            WITH src(
+                csv_id,
+                degree_level,
+                amount,
+                currency,
+                fee_type,
+                tuition_type,
+                amount_min,
+                amount_max,
+                normalized_monthly_amount,
+                normalization_note
+            ) AS (VALUES %s),
+            upsert AS (
+                INSERT INTO {TUITION_PATTERNS_TABLE}
+                (degree_level, amount, currency, fee_type, tuition_type, amount_min, amount_max, normalized_monthly_amount, normalization_note)
+                SELECT
+                    src.degree_level,
+                    src.amount,
+                    src.currency,
+                    src.fee_type,
+                    src.tuition_type,
+                    src.amount_min,
+                    src.amount_max,
+                    src.normalized_monthly_amount,
+                    src.normalization_note
+                FROM src
+                ON CONFLICT (degree_level, amount, currency, fee_type, tuition_type)
+                DO UPDATE SET
+                    amount_min = EXCLUDED.amount_min,
+                    amount_max = EXCLUDED.amount_max,
+                    normalized_monthly_amount = EXCLUDED.normalized_monthly_amount,
+                    normalization_note = EXCLUDED.normalization_note
+                RETURNING id, degree_level, amount, currency, fee_type, tuition_type
+            )
+            SELECT src.csv_id, upsert.id
+            FROM src
+            JOIN upsert
+                ON upsert.degree_level IS NOT DISTINCT FROM src.degree_level
+               AND upsert.amount IS NOT DISTINCT FROM src.amount
+               AND upsert.currency IS NOT DISTINCT FROM src.currency
+               AND upsert.fee_type = src.fee_type
+               AND upsert.tuition_type = src.tuition_type;
+        """
+        for chunk in _chunked(payload, batch_size):
+            execute_values(cursor, sql_stmt, chunk)
+            for csv_id, db_id in cursor.fetchall():
+                id_map[str(csv_id)] = int(db_id)
+            inserted += len(chunk)
 
         conn.commit()
-        print(f"tuition_patterns: {inserted}件投入")
         return inserted, id_map
-    except Error as e:
-        print(f"tuition_patterns CSV投入エラー: {e}")
+    except Error:
         conn.rollback()
-        return 0, {}
+        raise
     finally:
         cursor.close()
 
 
-def insert_map_from_csv(conn, csv_path, program_id_map, pattern_id_map):
-    """Program Tuition Map CSV を投入（IDマッピング経由で整合性を維持）。"""
+def _insert_map_rows(conn, rows, program_id_map, pattern_id_map):
     cursor = conn.cursor()
     inserted = 0
     skipped = 0
-
     try:
-        with open(csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                csv_program_id = str(row.get("degree_program_id", "")).strip()
-                csv_pattern_id = str(row.get("tuition_pattern_id", "")).strip()
+        payload = []
+        for row in rows:
+            csv_program_id = str(row.get("degree_program_id", "")).strip()
+            csv_pattern_id = str(row.get("tuition_pattern_id", "")).strip()
+            db_program_id = program_id_map.get(csv_program_id)
+            db_pattern_id = pattern_id_map.get(csv_pattern_id)
+            if db_program_id is None or db_pattern_id is None:
+                skipped += 1
+                continue
+            payload.append((int(db_program_id), int(db_pattern_id)))
 
-                db_program_id = program_id_map.get(csv_program_id)
-                db_pattern_id = pattern_id_map.get(csv_pattern_id)
-
-                if db_program_id is None or db_pattern_id is None:
-                    skipped += 1
-                    continue
-
-                cursor.execute(
-                    """
-                    INSERT INTO program_tuition_map (degree_program_id, tuition_pattern_id)
-                    VALUES (%s, %s)
-                    ON CONFLICT (degree_program_id, tuition_pattern_id) DO NOTHING;
-                    """,
-                    (db_program_id, db_pattern_id),
-                )
-                inserted += 1
+        batch_size = max(1, _env_int(BATCH_SIZE_ENV, BATCH_SIZE_DEFAULT))
+        sql_stmt = f"""
+            INSERT INTO {PROGRAM_TUITION_MAP_TABLE} (degree_program_id, tuition_pattern_id)
+            VALUES %s
+            ON CONFLICT (degree_program_id, tuition_pattern_id) DO NOTHING;
+        """
+        for chunk in _chunked(payload, batch_size):
+            execute_values(cursor, sql_stmt, chunk)
+            inserted += len(chunk)
 
         conn.commit()
-        print(f"program_tuition_map: {inserted}件投入, {skipped}件スキップ")
-        return inserted
-    except Error as e:
-        print(f"program_tuition_map CSV投入エラー: {e}")
+        return inserted, skipped
+    except Error:
         conn.rollback()
-        return 0
+        raise
     finally:
         cursor.close()
 
 
-def resolve_csv_dir(csv_dir):
-    """CSVディレクトリを実行場所に依存せず解決する。"""
-    input_path = Path(csv_dir)
-    script_dir = Path(__file__).resolve().parent
-    project_root = script_dir.parent
-
-    candidates = []
-    if input_path.is_absolute():#絶対パスか否かの判定
-        candidates.append(input_path)
-    else:
-        candidates.extend([
-            Path.cwd() / input_path,
-            script_dir / input_path,
-            project_root / input_path,
-        ])#相対パスの場合は、実行場所、スクリプト場所、プロジェクトルートからのパスを候補にする
-
-    # 順序を維持したまま重複を除去
-    unique_candidates = []
-    seen = set()
-    for p in candidates:
-        rp = p.resolve()
-        key = str(rp)
-        if key not in seen:
-            seen.add(key)
-            unique_candidates.append(rp)
-
-    for candidate in unique_candidates:
-        if candidate.exists() and candidate.is_dir():
-            return candidate
-
-    tried = "\n  - " + "\n  - ".join(str(p) for p in unique_candidates)
-    raise FileNotFoundError(
-        "CSV出力ディレクトリが見つかりません。CSV_OUTPUT_DIR を確認してください。"
-        f"\n探索先:{tried}"
-    )
-
-
-def load_all(csv_dir):
-    """完全フロー：接続 -> スキーマ作成 -> CSV投入。"""
+def load_all_from_rows(row_bundle):
+    """メモリ上の正規化済み行データを直接DBへ投入する。"""
     db_params = get_db_params_from_env()
-
     if not ensure_database_exists(db_params):
         return False
 
@@ -533,33 +578,68 @@ def load_all(csv_dir):
         if not create_schema(conn):
             return False
 
-        csv_dir = resolve_csv_dir(csv_dir)
-        uni_count, uni_id_map = insert_universities_from_csv(conn, csv_dir / "universities.csv")
-        prog_count, prog_id_map = insert_programs_from_csv(conn, csv_dir / "degree_programs.csv", uni_id_map)
-        pattern_count, pattern_id_map = insert_patterns_from_csv(conn, csv_dir / "tuition_patterns.csv")
-        map_count = insert_map_from_csv(conn, csv_dir / "program_tuition_map.csv", prog_id_map, pattern_id_map)
+        uni_rows = row_bundle.get("universities", [])
+        prog_rows = row_bundle.get("degree_programs", [])
+        pattern_rows = row_bundle.get("tuition_patterns", [])
+        map_rows = row_bundle.get("program_tuition_map", [])
+
+        uni_count, uni_id_map = _insert_universities_rows(conn, uni_rows)
+        prog_count, prog_skipped, prog_id_map = _insert_programs_rows(conn, prog_rows, uni_id_map)
+        pattern_count, pattern_id_map = _insert_patterns_rows(conn, pattern_rows)
+        map_count, map_skipped = _insert_map_rows(conn, map_rows, prog_id_map, pattern_id_map)
 
         print("\n" + "=" * 50)
-        print("DB投入完了")
+        print("DB投入完了（direct mode）")
         print(f"  - universities: {uni_count}件")
-        print(f"  - degree_programs: {prog_count}件")
+        print(f"  - degree_programs: {prog_count}件 (skip={prog_skipped})")
         print(f"  - tuition_patterns: {pattern_count}件")
-        print(f"  - program_tuition_map: {map_count}件")
+        print(f"  - program_tuition_map: {map_count}件 (skip={map_skipped})")
         print("=" * 50)
         return True
     finally:
         disconnect(conn)
 
 
-def main():
-    require_env(["CSV_OUTPUT_DIR"])
-    csv_output_dir = os.getenv("CSV_OUTPUT_DIR")
+def open_load_session():
+    """直投入用のDBセッションを初期化して返す。"""
+    db_params = get_db_params_from_env()
+    if not ensure_database_exists(db_params):
+        return None
 
-    success = load_all(csv_output_dir)
-    if success:
-        print("\n全プロセス完了")
-    else:
-        print("\nエラーが発生しました")
+    conn = connect(db_params)
+    if not conn:
+        return None
 
-if __name__ == "__main__":
-    main()
+    if not create_schema(conn):
+        disconnect(conn)
+        return None
+    return conn
+
+
+def close_load_session(conn):
+    disconnect(conn)
+
+
+def load_rows_chunk(conn, row_bundle):
+    """既存セッションに対して1チャンク分を投入し、件数サマリを返す。"""
+    uni_rows = row_bundle.get("universities", [])
+    prog_rows = row_bundle.get("degree_programs", [])
+    pattern_rows = row_bundle.get("tuition_patterns", [])
+    map_rows = row_bundle.get("program_tuition_map", [])
+
+    uni_count, uni_id_map = _insert_universities_rows(conn, uni_rows)
+    prog_count, prog_skipped, prog_id_map = _insert_programs_rows(conn, prog_rows, uni_id_map)
+    pattern_count, pattern_id_map = _insert_patterns_rows(conn, pattern_rows)
+    map_count, map_skipped = _insert_map_rows(conn, map_rows, prog_id_map, pattern_id_map)
+
+    return {
+        "universities": uni_count,
+        "degree_programs": prog_count,
+        "degree_programs_skipped": prog_skipped,
+        "tuition_patterns": pattern_count,
+        "program_tuition_map": map_count,
+        "program_tuition_map_skipped": map_skipped,
+    }
+
+
+

@@ -285,6 +285,34 @@ class TestSeedSearcher(unittest.TestCase):
         self.assertTrue(any("/courses/undergraduate" in url for url in result.detailed_seed_urls))
         self.assertTrue(any(hit.query == "sitemap" for hit in result.hits))
 
+    def test_search_is_skipped_when_cached_seed_urls_already_exist(self):
+        item = _build_item("Cached University")
+
+        cached_result = seed_searcher.SearchResult(
+            source_url=item.source_url,
+            source_domain="observer.example.org",
+            university_names=["Cached University"],
+            hits=[],
+            root_seed_urls=[],
+            detailed_seed_urls=[],
+            course_list_found=True,
+            recommended_depth=1,
+            duplicate_root_urls=["https://www.cached.ac.uk"],
+            errors=["search_skipped_cached_seed_urls: source_url=https://observer.example.org/list cached_roots=1"],
+        )
+
+        with (
+            patch("observer.seed_searcher._load_cached_seed_result", return_value=cached_result),
+            patch("observer.seed_searcher.BraveSearchAPI.search") as m_brave_search,
+            patch("observer.seed_searcher.SearchLogStore.from_env", return_value=None),
+        ):
+            result = seed_searcher.search_seeds(item)
+
+        m_brave_search.assert_not_called()
+        self.assertEqual(result.api_type, "cache-seed-urls")
+        self.assertEqual(result.api_usage_count, 0)
+        self.assertTrue(any("search_skipped_cached_seed_urls:" in err for err in result.errors))
+
     def test_search_and_internal_link_exploration(self):
         item = _build_item("Test University")
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 seed_observe_results の品質ゲート判定ツール。
@@ -34,6 +34,10 @@ import sys
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Iterable
+
+from db.schema_config import get_table_ref
+
+SEED_OBSERVE_RESULTS_TABLE = get_table_ref("SEED_OBSERVE_RESULTS_TABLE")
 
 
 DEFAULT_FATAL_ERROR_KEYWORDS = (
@@ -233,8 +237,7 @@ def _resolve_sql_dsn(cli_dsn: str | None) -> str:
         return cli_dsn.strip()
     env_dsn = (
         os.getenv("OBSERVE_LOG_POSTGRES_DSN", "").strip()
-        or os.getenv("SEARCH_LOG_POSTGRES_DSN", "").strip()
-        or os.getenv("QUEUE_LOG_POSTGRES_DSN", "").strip()
+        or os.getenv("PARENT_DB_OWNER_CONNECTION", "").strip()
     )
     return env_dsn
 
@@ -246,9 +249,9 @@ def load_rows_from_sql(dsn: str, run_id: int | None = None) -> list[RowRecord]:
         raise RuntimeError("psycopg2 が必要です。requirements を確認してください。") from exc
 
     if not dsn:
-        raise ValueError("DSN が空です。--dsn か環境変数 OBSERVE_LOG_POSTGRES_DSN などを設定してください。")
+        raise ValueError("DSN が空です。--dsn か環境変数 OBSERVE_LOG_POSTGRES_DSN / PARENT_DB_OWNER_CONNECTION を設定してください。")
 
-    query = """
+    query = f"""
         SELECT
             source_url,
             source_page_type,
@@ -257,7 +260,7 @@ def load_rows_from_sql(dsn: str, run_id: int | None = None) -> list[RowRecord]:
             detailed_seed_urls,
             api_usage_count,
             errors
-        FROM seed_observe_results
+        FROM {SEED_OBSERVE_RESULTS_TABLE}
     """
     params: list[Any] = []
 
@@ -265,7 +268,7 @@ def load_rows_from_sql(dsn: str, run_id: int | None = None) -> list[RowRecord]:
         query += " WHERE run_id = %s"
         params.append(run_id)
     else:
-        query += " WHERE run_id = (SELECT MAX(run_id) FROM seed_observe_results)"
+        query += f" WHERE run_id = (SELECT MAX(run_id) FROM {SEED_OBSERVE_RESULTS_TABLE})"
 
     query += " ORDER BY id"
 
@@ -351,3 +354,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

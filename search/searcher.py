@@ -1,4 +1,4 @@
-#例外にするべきもの
+﻿#例外にするべきもの
 # DB接続失敗
 # SQL実行エラー
 # 入力値不正
@@ -16,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 from dotenv import load_dotenv
+
+from db.schema_config import get_public_schema, get_table_ref, set_search_path
 
 load_dotenv()
 
@@ -59,6 +61,10 @@ def get_db_config():
         }
 
 DB_CONFIG = get_db_config()
+UNIVERSITIES_TABLE = get_table_ref("UNIVERSITIES_TABLE")
+DEGREE_PROGRAMS_TABLE = get_table_ref("DEGREE_PROGRAMS_TABLE")
+TUITION_PATTERNS_TABLE = get_table_ref("TUITION_PATTERNS_TABLE")
+PROGRAM_TUITION_MAP_TABLE = get_table_ref("PROGRAM_TUITION_MAP_TABLE")
 
 app = FastAPI(title="学位検索API", version="1.0.0")
 
@@ -97,6 +103,8 @@ def detail_page():
 def get_connection():
     try:
         conn = psycopg2.connect(**DB_CONFIG)
+        with conn.cursor() as cur:
+            set_search_path(cur, get_public_schema())
         return conn
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
@@ -139,7 +147,7 @@ def search_programs(
                 detail="price_min must be <= price_max"
             )
 
-    query = """
+    query = f"""
         SELECT
             dp.id,
             dp.program_name,
@@ -155,10 +163,10 @@ def search_programs(
             dp.is_online,
             dp.last_seen,
             dp.source_url
-        FROM degree_programs dp
-        JOIN universities u ON dp.university_id = u.id
-        LEFT JOIN program_tuition_map ptm ON ptm.degree_program_id = dp.id
-        LEFT JOIN tuition_patterns tp ON ptm.tuition_pattern_id = tp.id
+        FROM {DEGREE_PROGRAMS_TABLE} dp
+        JOIN {UNIVERSITIES_TABLE} u ON dp.university_id = u.id
+        LEFT JOIN {PROGRAM_TUITION_MAP_TABLE} ptm ON ptm.degree_program_id = dp.id
+        LEFT JOIN {TUITION_PATTERNS_TABLE} tp ON ptm.tuition_pattern_id = tp.id
         WHERE 1=1
     """
 
@@ -267,7 +275,7 @@ def get_program(program_id: int):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT
                     dp.id,
                     dp.program_name,
@@ -277,8 +285,8 @@ def get_program(program_id: int):
                     dp.last_seen,
                     u.name AS university_name,
                     u.country
-                FROM degree_programs dp
-                JOIN universities u ON dp.university_id = u.id
+                FROM {DEGREE_PROGRAMS_TABLE} dp
+                JOIN {UNIVERSITIES_TABLE} u ON dp.university_id = u.id
                 WHERE dp.id = %s
             """, (program_id,))
             row = cur.fetchone()
@@ -295,7 +303,7 @@ def get_program(program_id: int):
                 "country": row[7],
             }
 
-            cur.execute("""
+            cur.execute(f"""
                 SELECT
                     tp.degree_level,
                     tp.amount,
@@ -303,8 +311,8 @@ def get_program(program_id: int):
                     tp.tuition_type,
                     tp.normalized_monthly_amount,
                     tp.normalization_note
-                FROM tuition_patterns tp
-                JOIN program_tuition_map ptm ON ptm.tuition_pattern_id = tp.id
+                FROM {TUITION_PATTERNS_TABLE} tp
+                JOIN {PROGRAM_TUITION_MAP_TABLE} ptm ON ptm.tuition_pattern_id = tp.id
                 WHERE ptm.degree_program_id = %s
                 ORDER BY tp.tuition_type, tp.amount NULLS LAST
             """, (program_id,))
@@ -335,7 +343,7 @@ def get_countries():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT DISTINCT country FROM universities WHERE country IS NOT NULL ORDER BY country"
+                f"SELECT DISTINCT country FROM {UNIVERSITIES_TABLE} WHERE country IS NOT NULL ORDER BY country"
             )
             return [row[0] for row in cur.fetchall()]
     except Exception as e:
@@ -351,7 +359,7 @@ def get_degree_levels():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT DISTINCT degree_level FROM tuition_patterns WHERE degree_level IS NOT NULL ORDER BY degree_level"
+                f"SELECT DISTINCT degree_level FROM {TUITION_PATTERNS_TABLE} WHERE degree_level IS NOT NULL ORDER BY degree_level"
             )
             return [row[0] for row in cur.fetchall()]
     except Exception as e:
@@ -367,7 +375,7 @@ def get_currencies():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT DISTINCT currency FROM tuition_patterns WHERE currency IS NOT NULL ORDER BY currency"
+                f"SELECT DISTINCT currency FROM {TUITION_PATTERNS_TABLE} WHERE currency IS NOT NULL ORDER BY currency"
             )
             return [row[0] for row in cur.fetchall()]
     except Exception as e:
@@ -383,7 +391,7 @@ def get_tuition_types():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT DISTINCT tuition_type FROM tuition_patterns WHERE tuition_type IS NOT NULL ORDER BY tuition_type"
+                f"SELECT DISTINCT tuition_type FROM {TUITION_PATTERNS_TABLE} WHERE tuition_type IS NOT NULL ORDER BY tuition_type"
             )
             return [row[0] for row in cur.fetchall()]
     except Exception as e:

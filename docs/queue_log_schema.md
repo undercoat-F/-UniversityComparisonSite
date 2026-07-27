@@ -48,6 +48,43 @@ erDiagram
 - この構成は「実行単位の親 + 状態 + 履歴 + 関係 + 失敗」を分けて管理する設計です。
 - まず Markdown として保存し、必要ならあとで PNG / SVG にもできます。
 
+## Schema Split Proposal
+
+Neon の branch を分けるのではなく、1つのDB内で schema を分ける方針。
+
+### 1. `public`
+- `universities`
+- `degree_programs`
+- `tuition_patterns`
+- `program_tuition_map`
+- seed URL 系をここに置くか、用途に応じて `etl` 側に寄せる
+
+### 2. `etl`
+- `crawl_runs`
+- `crawl_queue_state`
+- `crawl_attempts`
+- `crawl_edges`
+- `crawl_failures`
+- `crawl_tag_keyword_hits`
+- `crawl_domain_tag_scores`
+- `crawl_tag_class_counts`
+- `crawl_domain_class_counts`
+- `seed_urls`
+- ETL 実行の一時集計・投入制御に関わるテーブル
+
+### 3. `observer`
+- `seed_observe_runs`
+- `seed_observe_results`
+- `seed_search_runs`
+- observer 系の監視・検索・変換ログ
+
+## Migration Notes
+
+- テーブル定義はそのまま維持し、`CREATE TABLE` の先頭に schema 名を付けるだけで移行可能。
+- 例: `CREATE TABLE IF NOT EXISTS etl.crawl_runs (...)`
+- 既存コードは `search_path` に依存しないよう、最終的には schema 修飾で参照する。
+- 接続先の集約後は、`ETL_DSN` / `QUEUE_LOG_POSTGRES_DSN` / `SEARCH_LOG_POSTGRES_DSN` を用途別に整理しつつ、最終的には1DB・複数schemaへ寄せる。
+
 ---------------------------------
 
 大学認定サイト監視クローラー
@@ -313,7 +350,7 @@ APIの利用数が多くなっているように思う。無料枠を使い切�
 追加サイトの 70%以上で root_seed_urls が 1件以上
 errors に致命的接続エラーが連発しない
 API使用量が想定内
-PDF入力でも処理が落ちない（精度は問わず）
+後段の実行時の記録を取る事
 ____________
 残りタスク
 observer疎通完成
