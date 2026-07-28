@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import httpx
 
 from crawler.crawlworker import DEFAULT_HEADERS, seed_sitemap_candidates, worker
-from dataclass.dataclass import SiteState
+from dataclass.dataclass import QueueBudget, SiteState
 from ETL.queue_log import QueueLogStore
 
 
@@ -71,7 +71,7 @@ async def _seed_sitemaps_with_limits(sites: list[SiteState]) -> tuple[int, int]:
     seeded_total = sum(len(site.sitemap_candidates) for site in sites)
     return seeded_total, failed
 
-def build_site_states(targets: Iterable[tuple[str, int]]) -> list[SiteState]:
+def build_site_states(targets: Iterable[tuple[str, int]], *, enqueue_budget: QueueBudget | None = None) -> list[SiteState]:
     grouped: dict[str, list[tuple[str, int]]] = {}
     for url, depth in targets:
         domain = urlparse(url).netloc
@@ -81,7 +81,7 @@ def build_site_states(targets: Iterable[tuple[str, int]]) -> list[SiteState]:
     for domain, entries in grouped.items():
         start_urls = [url for url, _ in entries]
         max_depth = max(depth for _, depth in entries)
-        sites.append(SiteState(domain=domain, start_urls=start_urls, max_depth=max_depth))
+        sites.append(SiteState(domain=domain, start_urls=start_urls, max_depth=max_depth, enqueue_budget=enqueue_budget))
     return sites
 
 
@@ -99,7 +99,9 @@ async def run_dispatcher(
 ) -> list[SiteState]:
     """crawl-delay 中のサイトは待機し、ready な他ドメインを進める。"""
     #timeout_sec はサイト全体のタイムアウト（crawl-delay も含む）。最大待ち時間。
-    sites = build_site_states(targets)
+    pending_queue_limit = _env_int("ETL_MAX_PENDING_QUEUE_ITEMS", 2000)
+    enqueue_budget = QueueBudget(limit=pending_queue_limit)
+    sites = build_site_states(targets, enqueue_budget=enqueue_budget)
     if not sites:
         return sites
 
@@ -146,7 +148,7 @@ async def run_dispatcher(
     last_progress_at = started_at
 
     print(
-        f"[DISPATCHER] start sites={len(sites)} timeout={timeout_sec}s",
+        f"[DISPATCHER] start sites={len(sites)} timeout={timeout_sec}s pending_limit={pending_queue_limit}",
         flush=True,
     )
 

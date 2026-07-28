@@ -7,6 +7,25 @@ from typing import Any, Literal, Optional
 from urllib.robotparser import RobotFileParser
 from enum import Enum, auto
 
+
+@dataclass
+class QueueBudget:
+    limit: int
+    pending_count: int = 0
+
+    def can_reserve(self) -> bool:
+        return self.pending_count < self.limit
+
+    def reserve(self) -> bool:
+        if not self.can_reserve():
+            return False
+        self.pending_count += 1
+        return True
+
+    def release(self) -> None:
+        if self.pending_count > 0:
+            self.pending_count -= 1
+
 @dataclass
 class URLTask:
     url: str
@@ -45,6 +64,7 @@ class SiteState:
     start_urls: list[str]
     run_id: Optional[int] = None
     queue_logger: Optional[Any] = None
+    enqueue_budget: Optional[QueueBudget] = None
     crawl_delay: float = 0.0
     last_access: float = 0.0
     user_agent: str = "*"
@@ -124,6 +144,8 @@ class SiteState:
     def enqueue(self, url: str, depth: int, discovered_from: str = "") -> bool:
         if url in self.visited or url in self.queued or depth > self.max_depth:
             return False
+        if self.enqueue_budget is not None and not self.enqueue_budget.reserve():
+            return False
         self.queue.append(URLTask(url=url, depth=depth, discovered_from=discovered_from))
         self.queued.add(url)
 
@@ -167,6 +189,8 @@ class SiteState:
             return None
         task = self.queue.popleft()
         self.queued.discard(task.url)
+        if self.enqueue_budget is not None:
+            self.enqueue_budget.release()
         return task
 
     def set_domain_semaphore_limit(self, limit: int) -> None:
