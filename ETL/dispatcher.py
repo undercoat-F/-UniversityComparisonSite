@@ -99,7 +99,7 @@ async def run_dispatcher(
 ) -> list[SiteState]:
     """crawl-delay 中のサイトは待機し、ready な他ドメインを進める。"""
     #timeout_sec はサイト全体のタイムアウト（crawl-delay も含む）。最大待ち時間。
-    pending_queue_limit = _env_int("ETL_MAX_PENDING_QUEUE_ITEMS", 2000)
+    pending_queue_limit = _env_int("ETL_MAXPENDING_QUEUE_ITEMS", 2000)
     enqueue_budget = QueueBudget(limit=pending_queue_limit)
     sites = build_site_states(targets, enqueue_budget=enqueue_budget)
     if not sites:

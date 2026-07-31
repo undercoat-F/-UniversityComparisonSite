@@ -64,6 +64,7 @@ def _env_int(name: str, default: int, minimum: int) -> int:
 
 SITEMAP_SEED_MAX_SECONDS = _env_int("ETL_SITEMAP_SEED_MAX_SECONDS", 60, 1)
 SITEMAP_SEED_MAX_SITEMAPS = _env_int("ETL_SITEMAP_SEED_MAX_SITEMAPS", 40, 1)
+TAG_CLASS_LOG_URL_LIMIT_PER_DOMAIN = _env_int("ETL_TAG_CLASS_LOG_URL_LIMIT_PER_DOMAIN", 20, 0)
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -307,6 +308,18 @@ def should_queue_url(site: SiteState, url: str):
     if not can_fetch_url(site, url):
         return False
 
+    return True
+
+
+def _should_log_tag_class_counts(site: SiteState, url: str) -> bool:
+    limit = TAG_CLASS_LOG_URL_LIMIT_PER_DOMAIN
+    if limit <= 0:
+        return False
+    if url in site.tag_class_logged_urls:
+        return True
+    if len(site.tag_class_logged_urls) >= limit:
+        return False
+    site.tag_class_logged_urls.add(url)
     return True
 
 #抽出ロジック-----------------------------
@@ -1133,12 +1146,13 @@ async def run_url_task(site: SiteState, task: URLTask, session: httpx.AsyncClien
                         domain=site.domain,
                         tag_hits=page_record.get("tag_keyword_hits", []),
                     )
-                    site.queue_logger.add_tag_class_counts(
-                        run_id=site.run_id,
-                        url=task.url,
-                        domain=site.domain,
-                        class_counts=page_record.get("tag_class_counts", []),
-                    )
+                    if _should_log_tag_class_counts(site, task.url):
+                        site.queue_logger.add_tag_class_counts(
+                            run_id=site.run_id,
+                            url=task.url,
+                            domain=site.domain,
+                            class_counts=page_record.get("tag_class_counts", []),
+                        )
                 except Exception:
                     pass
             if not should_exclude_course_page(task.url, page_record.get("title", "")):

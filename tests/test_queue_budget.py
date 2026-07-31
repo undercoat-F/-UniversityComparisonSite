@@ -3,6 +3,7 @@
 
 import unittest
 
+from crawler.crawlworker import _should_log_tag_class_counts
 from dataclass.dataclass import QueueBudget, SiteState
 
 
@@ -22,6 +23,18 @@ class TestQueueBudget(unittest.TestCase):
 
         self.assertTrue(site.enqueue("https://example.edu/c", depth=0))
         self.assertEqual(budget.pending_count, 2)
+
+    def test_tag_class_count_logging_stops_after_domain_limit(self):
+        site = SiteState(domain="example.edu", start_urls=[], max_depth=2)
+
+        allowed = []
+        for index in range(1, 23):
+            url = f"https://example.edu/p/{index}"
+            allowed.append(_should_log_tag_class_counts(site, url))
+
+        self.assertEqual(sum(1 for item in allowed if item), 20)
+        self.assertEqual(allowed[-1], False)
+        self.assertEqual(allowed[-2], False)
 
 
 if __name__ == "__main__":

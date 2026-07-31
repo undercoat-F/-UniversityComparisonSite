@@ -169,7 +169,7 @@ def create_schema(conn):
         cursor.execute(f"ALTER TABLE {TUITION_PATTERNS_TABLE} ADD COLUMN IF NOT EXISTS normalization_note TEXT;")
         cursor.execute(f"UPDATE {TUITION_PATTERNS_TABLE} SET tuition_type = 'unknown' WHERE tuition_type IS NULL;")
         cursor.execute(
-            """
+            f"""
             DO $$
             BEGIN
                 IF EXISTS (

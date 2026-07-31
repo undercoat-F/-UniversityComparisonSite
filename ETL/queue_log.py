@@ -42,7 +42,10 @@ class QueueLogStore:
 
     def _connect(self):
         if self._conn is not None:
-            return self._conn
+            # psycopg2 connection.closed == 0 means open; non-zero means closed.
+            if getattr(self._conn, "closed", 1) == 0:
+                return self._conn
+            self._conn = None
 
         if not self.pg_dsn:
             raise ValueError("pg_dsn is required for PostgreSQL connection")

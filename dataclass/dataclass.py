@@ -90,6 +90,7 @@ class SiteState:
     extracted_links_by_url: dict[str, list[str]] = field(default_factory=dict)
     crawl_attempts: list[CrawlAttempt] = field(default_factory=list)
     extracted_records: list[dict[str, Any]] = field(default_factory=list)
+    tag_class_logged_urls: set[str] = field(default_factory=set)
     robots_parser: Optional[RobotFileParser] = None
     robots_ready: bool = False
     sitemap_urls: list[str] = field(default_factory=list)
