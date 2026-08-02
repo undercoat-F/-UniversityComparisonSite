@@ -89,6 +89,35 @@ def _active_sites(sites: list[SiteState]) -> list[SiteState]:
     return [site for site in sites if site.status == "active" and site.has_pending()]
 
 
+def _progress_snapshot(sites: list[SiteState], root_target_total: int) -> dict[str, int | float]:
+    visited_total = sum(len(site.visited) for site in sites)
+    pending_total = sum(len(site.queue) for site in sites)
+    in_progress_total = sum(len(site.in_progress_urls) for site in sites)
+    success_total = sum(site.success_count for site in sites)
+    error_total = sum(site.error_count for site in sites)
+    completed_total = success_total + error_total
+    known_total = visited_total + pending_total
+    root_visited = sum(
+        sum(1 for url in site.start_urls if url in site.visited)
+        for site in sites
+    )
+    known_progress_pct = (completed_total / known_total * 100.0) if known_total > 0 else 100.0
+    root_progress_pct = (root_visited / root_target_total * 100.0) if root_target_total > 0 else 100.0
+    return {
+        "root_target_total": root_target_total,
+        "root_visited": root_visited,
+        "visited_total": visited_total,
+        "pending_total": pending_total,
+        "in_progress_total": in_progress_total,
+        "success_total": success_total,
+        "error_total": error_total,
+        "completed_total": completed_total,
+        "known_total": known_total,
+        "known_progress_pct": known_progress_pct,
+        "root_progress_pct": root_progress_pct,
+    }
+
+
 async def run_dispatcher(
     targets: list[tuple[str, int]],
     *,
@@ -98,10 +127,15 @@ async def run_dispatcher(
     queue_log_enabled: bool = True,
 ) -> list[SiteState]:
     """crawl-delay 中のサイトは待機し、ready な他ドメインを進める。"""
-    #timeout_sec はサイト全体のタイムアウト（crawl-delay も含む）。最大待ち時間。
+    # timeout_sec は httpx リクエストのタイムアウト秒。
+    httpx_timeout_sec = _env_int("ETL_HTTPX_TIMEOUT_SEC", timeout_sec)
+    worker_timeout_sec = _env_int("ETL_WORKER_TIMEOUT_SEC", 120)
+    dispatcher_timeout_sec = _env_int("ETL_DISPATCHER_TIMEOUT_SEC", 0, 0)
+
     pending_queue_limit = _env_int("ETL_MAXPENDING_QUEUE_ITEMS", 2000)
     enqueue_budget = QueueBudget(limit=pending_queue_limit)
     sites = build_site_states(targets, enqueue_budget=enqueue_budget)
+    root_target_total = len(targets)
     if not sites:
         return sites
 
@@ -148,13 +182,18 @@ async def run_dispatcher(
     last_progress_at = started_at
 
     print(
-        f"[DISPATCHER] start sites={len(sites)} timeout={timeout_sec}s pending_limit={pending_queue_limit}",
+        "[DISPATCHER] start "
+        f"sites={len(sites)} "
+        f"httpx_timeout={httpx_timeout_sec}s "
+        f"worker_timeout={worker_timeout_sec}s "
+        f"dispatcher_timeout={(str(dispatcher_timeout_sec) + 's') if dispatcher_timeout_sec > 0 else 'disabled'} "
+        f"pending_limit={pending_queue_limit}",
         flush=True,
     )
 
     async with httpx.AsyncClient(
         headers=DEFAULT_HEADERS,
-        timeout=timeout_sec,
+        timeout=httpx_timeout_sec,
         follow_redirects=True,
     ) as session:
         run_status = "completed"
@@ -170,18 +209,31 @@ async def run_dispatcher(
 
             while True:
                 now = time.monotonic()
+                if dispatcher_timeout_sec > 0 and now - started_at >= dispatcher_timeout_sec:
+                    snap = _progress_snapshot(sites, root_target_total)
+                    run_status = "timed_out"
+                    run_notes = (
+                        f"dispatcher_timeout_reached elapsed={int(now - started_at)}s "
+                        f"limit={dispatcher_timeout_sec}s "
+                        f"root={snap['root_visited']}/{snap['root_target_total']}({snap['root_progress_pct']:.1f}%) "
+                        f"known_done={snap['completed_total']}/{snap['known_total']}({snap['known_progress_pct']:.1f}%) "
+                        f"pending={snap['pending_total']} in_progress={snap['in_progress_total']}"
+                    )
+                    print(f"[DISPATCHER][WARN] {run_notes}", flush=True)
+                    break
+
                 if now - last_progress_at >= progress_interval_sec:
-                    visited_total = sum(len(site.visited) for site in sites)
-                    pending_total = sum(len(site.queue) for site in sites)
-                    success_total = sum(site.success_count for site in sites)
-                    error_total = sum(site.error_count for site in sites)
+                    snap = _progress_snapshot(sites, root_target_total)
                     print(
                         "[PROGRESS] "
                         f"elapsed={int(now - started_at)}s "
-                        f"visited_total={visited_total} "
-                        f"pending_total={pending_total} "
-                        f"success_total={success_total} "
-                        f"error_total={error_total}",
+                        f"root={snap['root_visited']}/{snap['root_target_total']}({snap['root_progress_pct']:.1f}%) "
+                        f"known_done={snap['completed_total']}/{snap['known_total']}({snap['known_progress_pct']:.1f}%) "
+                        f"visited_total={snap['visited_total']} "
+                        f"pending_total={snap['pending_total']} "
+                        f"in_progress_total={snap['in_progress_total']} "
+                        f"success_total={snap['success_total']} "
+                        f"error_total={snap['error_total']}",
                         flush=True,
                     )
                     last_progress_at = now
@@ -197,7 +249,29 @@ async def run_dispatcher(
                     continue
 
                 ready = ready[:max_active_sites]
-                await asyncio.gather(*(worker(site, session) for site in ready))
+                worker_tasks = [(site, asyncio.create_task(worker(site, session))) for site in ready]
+                done, pending = await asyncio.wait(
+                    [task for _, task in worker_tasks],
+                    timeout=worker_timeout_sec,
+                )
+
+                if pending:
+                    for site, task in worker_tasks:
+                        if task in pending:
+                            site.errors.append(
+                                f"worker_timeout domain={site.domain} timeout={worker_timeout_sec}s"
+                            )
+                            task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    print(
+                        f"[DISPATCHER][WARN] worker timeout count={len(pending)} timeout={worker_timeout_sec}s",
+                        flush=True,
+                    )
+
+                for task in done:
+                    exc = task.exception()
+                    if exc is not None:
+                        raise exc
         except Exception as exc:
             run_status = "failed"
             run_notes = f"{type(exc).__name__}: {exc}"

@@ -65,6 +65,10 @@ def _env_int(name: str, default: int, minimum: int) -> int:
 SITEMAP_SEED_MAX_SECONDS = _env_int("ETL_SITEMAP_SEED_MAX_SECONDS", 60, 1)
 SITEMAP_SEED_MAX_SITEMAPS = _env_int("ETL_SITEMAP_SEED_MAX_SITEMAPS", 40, 1)
 TAG_CLASS_LOG_URL_LIMIT_PER_DOMAIN = _env_int("ETL_TAG_CLASS_LOG_URL_LIMIT_PER_DOMAIN", 20, 0)
+REQUESTS_TIMEOUT_SEC = _env_int("ETL_REQUESTS_TIMEOUT_SEC", DEFAULT_TIMEOUT, 1)
+REQUESTS_ROBOTS_TIMEOUT_SEC = _env_int("ETL_REQUESTS_ROBOTS_TIMEOUT_SEC", 10, 1)
+REQUESTS_SITEMAP_TIMEOUT_SEC = _env_int("ETL_REQUESTS_SITEMAP_TIMEOUT_SEC", 15, 1)
+ROBOTS_READ_TIMEOUT_SEC = _env_int("ETL_ROBOTS_READ_TIMEOUT_SEC", 20, 1)
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -857,7 +861,11 @@ def _collect_sitemap_urls(
                 continue
             visited_sitemaps.add(sitemap_url)
             try:
-                response = requests.get(sitemap_url, headers=DEFAULT_HEADERS, timeout=15)
+                response = requests.get(
+                    sitemap_url,
+                    headers=DEFAULT_HEADERS,
+                    timeout=REQUESTS_SITEMAP_TIMEOUT_SEC,
+                )
                 response.raise_for_status()
                 urls.extend(
                     _collect_sitemap_urls(
@@ -900,7 +908,11 @@ async def seed_sitemap_candidates(site: SiteState) -> list[str]:
 
         sitemap_urls: list[str] = []
         try:
-            robots_resp = requests.get(robots_url, headers=DEFAULT_HEADERS, timeout=10)
+            robots_resp = requests.get(
+                robots_url,
+                headers=DEFAULT_HEADERS,
+                timeout=REQUESTS_ROBOTS_TIMEOUT_SEC,
+            )
             if robots_resp.status_code == 200:
                 sitemap_urls.extend(_extract_sitemap_directives(robots_resp.text))
         except Exception:
@@ -922,7 +934,11 @@ async def seed_sitemap_candidates(site: SiteState) -> list[str]:
                 break
 
             try:
-                response = requests.get(sitemap_url, headers=DEFAULT_HEADERS, timeout=15)
+                response = requests.get(
+                    sitemap_url,
+                    headers=DEFAULT_HEADERS,
+                    timeout=REQUESTS_SITEMAP_TIMEOUT_SEC,
+                )
                 response.raise_for_status()
                 collected_urls.extend(
                     _collect_sitemap_urls(
@@ -968,7 +984,7 @@ async def fetch_with_fallback(
     session: httpx.AsyncClient,
     url: str,
     *,
-    timeout: int = DEFAULT_TIMEOUT,
+    timeout: int = REQUESTS_TIMEOUT_SEC,
     headers: Optional[dict[str, str]] = None,
 ) -> FetchResult:
     """httpx 失敗時は必ず requests を実行する。"""
@@ -1045,7 +1061,7 @@ async def ensure_robots(site: SiteState) -> None:
         parser.read()
 
     try:
-        await asyncio.to_thread(_read)
+        await asyncio.wait_for(asyncio.to_thread(_read), timeout=ROBOTS_READ_TIMEOUT_SEC)
         crawl_delay = parser.crawl_delay(site.user_agent) or parser.crawl_delay("*")
         if crawl_delay:
             site.crawl_delay = max(site.crawl_delay, float(crawl_delay))
