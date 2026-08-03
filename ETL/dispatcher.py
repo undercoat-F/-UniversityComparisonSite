@@ -118,6 +118,34 @@ def _progress_snapshot(sites: list[SiteState], root_target_total: int) -> dict[s
     }
 
 
+def _stuck_site_lines(sites: list[SiteState], limit: int = 5) -> list[str]:
+    ranked = sorted(
+        (site for site in sites if site.status == "active" and site.has_pending()),
+        key=lambda s: len(s.queue),
+        reverse=True,
+    )
+    lines: list[str] = []
+    now = time.time()
+    for site in ranked[: max(1, limit)]:
+        last_access_age = max(0.0, now - site.last_access) if site.last_access > 0 else -1.0
+        lines.append(
+            "domain={domain} pending={pending} in_progress={in_progress} "
+            "ready_in={ready_in:.2f}s crawl_delay={crawl_delay:.2f}s last_access_age={last_access_age:.2f}s "
+            "visited={visited} success={success} error={error}".format(
+                domain=site.domain,
+                pending=len(site.queue),
+                in_progress=len(site.in_progress_urls),
+                ready_in=site.seconds_until_ready(),
+                crawl_delay=site.crawl_delay,
+                last_access_age=last_access_age,
+                visited=len(site.visited),
+                success=site.success_count,
+                error=site.error_count,
+            )
+        )
+    return lines
+
+
 async def run_dispatcher(
     targets: list[tuple[str, int]],
     *,
@@ -131,6 +159,8 @@ async def run_dispatcher(
     httpx_timeout_sec = _env_int("ETL_HTTPX_TIMEOUT_SEC", timeout_sec)
     worker_timeout_sec = _env_int("ETL_WORKER_TIMEOUT_SEC", 120)
     dispatcher_timeout_sec = _env_int("ETL_DISPATCHER_TIMEOUT_SEC", 0, 0)
+    stall_guard_sec = _env_int("ETL_STALL_GUARD_SEC", 900, 0)
+    stall_site_sample = _env_int("ETL_STALL_SITE_SAMPLE", 5)
 
     pending_queue_limit = _env_int("ETL_MAXPENDING_QUEUE_ITEMS", 2000)
     enqueue_budget = QueueBudget(limit=pending_queue_limit)
@@ -180,6 +210,10 @@ async def run_dispatcher(
 
     started_at = time.monotonic()
     last_progress_at = started_at
+    stalled_since: float | None = None
+    last_completed_total = -1
+    last_visited_total = -1
+    last_pending_total = -1
 
     print(
         "[DISPATCHER] start "
@@ -187,6 +221,7 @@ async def run_dispatcher(
         f"httpx_timeout={httpx_timeout_sec}s "
         f"worker_timeout={worker_timeout_sec}s "
         f"dispatcher_timeout={(str(dispatcher_timeout_sec) + 's') if dispatcher_timeout_sec > 0 else 'disabled'} "
+        f"stall_guard={(str(stall_guard_sec) + 's') if stall_guard_sec > 0 else 'disabled'} "
         f"pending_limit={pending_queue_limit}",
         flush=True,
     )
@@ -209,8 +244,45 @@ async def run_dispatcher(
 
             while True:
                 now = time.monotonic()
+                snap = _progress_snapshot(sites, root_target_total)
+
+                completed_total = int(snap["completed_total"])
+                visited_total = int(snap["visited_total"])
+                pending_total = int(snap["pending_total"])
+                in_progress_total = int(snap["in_progress_total"])
+
+                if pending_total > 0 and in_progress_total == 0:
+                    no_state_change = (
+                        completed_total == last_completed_total
+                        and visited_total == last_visited_total
+                        and pending_total == last_pending_total
+                    )
+                    if no_state_change:
+                        if stalled_since is None:
+                            stalled_since = now
+                        elif stall_guard_sec > 0 and now - stalled_since >= stall_guard_sec:
+                            run_status = "stalled"
+                            run_notes = (
+                                f"stall_guard_triggered elapsed={int(now - started_at)}s "
+                                f"stall_for={int(now - stalled_since)}s "
+                                f"root={snap['root_visited']}/{snap['root_target_total']}({snap['root_progress_pct']:.1f}%) "
+                                f"known_done={snap['completed_total']}/{snap['known_total']}({snap['known_progress_pct']:.1f}%) "
+                                f"pending={pending_total} in_progress={in_progress_total}"
+                            )
+                            print(f"[DISPATCHER][WARN] {run_notes}", flush=True)
+                            for line in _stuck_site_lines(sites, limit=stall_site_sample):
+                                print(f"[DISPATCHER][STUCK] {line}", flush=True)
+                            break
+                    else:
+                        stalled_since = None
+                else:
+                    stalled_since = None
+
+                last_completed_total = completed_total
+                last_visited_total = visited_total
+                last_pending_total = pending_total
+
                 if dispatcher_timeout_sec > 0 and now - started_at >= dispatcher_timeout_sec:
-                    snap = _progress_snapshot(sites, root_target_total)
                     run_status = "timed_out"
                     run_notes = (
                         f"dispatcher_timeout_reached elapsed={int(now - started_at)}s "
@@ -223,7 +295,6 @@ async def run_dispatcher(
                     break
 
                 if now - last_progress_at >= progress_interval_sec:
-                    snap = _progress_snapshot(sites, root_target_total)
                     print(
                         "[PROGRESS] "
                         f"elapsed={int(now - started_at)}s "

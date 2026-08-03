@@ -292,6 +292,29 @@ def _chunked(items, size):
         yield items[i : i + size]
 
 
+def _sync_id_sequences(conn):
+    """SERIAL シーケンスを各テーブルの最大 id に同期する。"""
+    cursor = conn.cursor()
+    try:
+        targets = (UNIVERSITIES_TABLE, DEGREE_PROGRAMS_TABLE, TUITION_PATTERNS_TABLE)
+        for table_ref in targets:
+            cursor.execute("SELECT pg_get_serial_sequence(%s, 'id')", (table_ref,))
+            row = cursor.fetchone()
+            seq_name = row[0] if row else None
+            if not seq_name:
+                continue
+            cursor.execute(
+                f"SELECT setval(%s, COALESCE((SELECT MAX(id) FROM {table_ref}), 1), true)",
+                (seq_name,),
+            )
+        conn.commit()
+    except Error:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+
+
 def _insert_universities_rows(conn, rows):
     cursor = conn.cursor()
     inserted = 0
@@ -613,6 +636,8 @@ def open_load_session():
     if not create_schema(conn):
         disconnect(conn)
         return None
+
+    _sync_id_sequences(conn)
     return conn
 
 
@@ -627,7 +652,15 @@ def load_rows_chunk(conn, row_bundle):
     pattern_rows = row_bundle.get("tuition_patterns", [])
     map_rows = row_bundle.get("program_tuition_map", [])
 
-    uni_count, uni_id_map = _insert_universities_rows(conn, uni_rows)
+    try:
+        uni_count, uni_id_map = _insert_universities_rows(conn, uni_rows)
+    except Error as exc:
+        # 過去の同期処理等でシーケンスが巻き戻っている場合のみ、自動復旧して1回再試行する。
+        if "universities_pkey" not in str(exc):
+            raise
+        _sync_id_sequences(conn)
+        uni_count, uni_id_map = _insert_universities_rows(conn, uni_rows)
+
     prog_count, prog_skipped, prog_id_map = _insert_programs_rows(conn, prog_rows, uni_id_map)
     pattern_count, pattern_id_map = _insert_patterns_rows(conn, pattern_rows)
     map_count, map_skipped = _insert_map_rows(conn, map_rows, prog_id_map, pattern_id_map)
