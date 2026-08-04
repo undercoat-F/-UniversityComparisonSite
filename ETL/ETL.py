@@ -34,23 +34,6 @@ def iter_jsonl_batches(jsonl_path: str, batch_size: int):
         yield records, degree_count
 
 
-def iter_site_state_batches(site_states, batch_size: int):
-    records = []
-    degree_count = 0
-    for site in site_states:
-        for record in site.extracted_records:
-            degrees = record.get("degrees", [])
-            if isinstance(degrees, list):
-                degree_count += len(degrees)
-            records.append(record)
-            if len(records) >= batch_size:
-                yield records, degree_count
-                records = []
-                degree_count = 0
-    if records:
-        yield records, degree_count
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run end-to-end ETL: crawl -> direct DB load")
     parser.add_argument(
@@ -76,20 +59,20 @@ def main() -> None:
     load_dotenv(encoding="utf-8-sig")
     args = parse_args()
     direct_jsonl_path: str | None = None
-    crawl_site_states = None
 
     if not args.skip_crawl:
         print("[ETL] Stage 1/3: scheduler crawl start", flush=True)
-        scheduler_result = asyncio.run(run_etl(persist_extraction_logs=False))
-        jsonl_path = scheduler_result["jsonl_path"]
-        crawl_site_states = scheduler_result.get("site_states")
+        scheduler_result = asyncio.run(run_etl(persist_summary=True))
+        direct_jsonl_path = scheduler_result.get("jsonl_path")
+        if not direct_jsonl_path:
+            raise RuntimeError("Scheduler did not provide extracted_records JSONL path")
 
         print(
             "[ETL] Stage 1/3 complete: "
             f"records={scheduler_result.get('total_records', 0)} degrees={scheduler_result.get('total_degrees', 0)}",
             flush=True,
         )
-        print("[ETL] Stage 1.5/3: direct mode source=in-memory site_states", flush=True)
+        print(f"[ETL] Stage 1.5/3: direct mode source=jsonl path={direct_jsonl_path}", flush=True)
     else:
         jsonl_candidates = sorted(Path("log").glob("extracted_records_*.jsonl"))
         if not jsonl_candidates:
@@ -122,10 +105,7 @@ def main() -> None:
             raise RuntimeError("db_saver.open_load_session failed")
 
     try:
-        if crawl_site_states is not None:
-            batch_iter = iter_site_state_batches(crawl_site_states, batch_size)
-        else:
-            batch_iter = iter_jsonl_batches(direct_jsonl_path, batch_size)
+        batch_iter = iter_jsonl_batches(direct_jsonl_path, batch_size)
 
         for batch_records, batch_degrees in batch_iter:
             chunks += 1

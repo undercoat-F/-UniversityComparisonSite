@@ -1100,7 +1100,7 @@ async def run_url_task(site: SiteState, task: URLTask, session: httpx.AsyncClien
             error="blocked_by_robots",
         )
         site.record_attempt(attempt, elapsed_sec=0.0)
-        site.errors.append(f"{task.url}: blocked_by_robots")
+        site.add_error(f"{task.url}: blocked_by_robots")
 
         if site.queue_logger is not None and site.run_id is not None:
             try:
@@ -1145,7 +1145,7 @@ async def run_url_task(site: SiteState, task: URLTask, session: httpx.AsyncClien
         used_fallback = fetch_result.used_fallback
         connection_log = fetch_result.connection_log
         if bot_check_page(html_text):
-            site.errors.append(f"{task.url}: bot_check_suspected")
+            site.add_error(f"{task.url}: bot_check_suspected")
 
         links = extract_same_domain_links(html_text, task.url, site.domain)
         soup = BeautifulSoup(html_text, "html.parser")
@@ -1242,7 +1242,7 @@ async def run_url_task(site: SiteState, task: URLTask, session: httpx.AsyncClien
             connection_log=connection_log,
         )
         site.record_attempt(attempt, elapsed_sec=time.perf_counter() - start)
-        site.errors.append(f"{task.url}: {type(exc).__name__}: {exc}")
+        site.add_error(f"{task.url}: {type(exc).__name__}: {exc}")
 
         if site.queue_logger is not None and site.run_id is not None:
             fetch_method = _pick_fetch_method(connection_log, used_fallback=False)

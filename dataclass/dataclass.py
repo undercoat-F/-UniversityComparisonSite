@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 from urllib.robotparser import RobotFileParser
 from enum import Enum, auto
 
@@ -64,6 +64,10 @@ class SiteState:
     start_urls: list[str]
     run_id: Optional[int] = None
     queue_logger: Optional[Any] = None
+    record_sink: Optional[Callable[[str, dict[str, Any]], None]] = None
+    error_sink: Optional[Callable[[str, str], None]] = None
+    error_buffer_limit: int = 200
+    retain_extracted_records: bool = True
     enqueue_budget: Optional[QueueBudget] = None
     crawl_delay: float = 0.0
     last_access: float = 0.0
@@ -83,6 +87,7 @@ class SiteState:
     robotstxt: Optional[str] = None
 
     queue: deque[URLTask] = field(default_factory=deque)
+    start_url_set: set[str] = field(default_factory=set)
     visited: set[str] = field(default_factory=set)
     queued: set[str] = field(default_factory=set)
     errors: list[str] = field(default_factory=list)
@@ -90,6 +95,12 @@ class SiteState:
     extracted_links_by_url: dict[str, list[str]] = field(default_factory=dict)
     crawl_attempts: list[CrawlAttempt] = field(default_factory=list)
     extracted_records: list[dict[str, Any]] = field(default_factory=list)
+    extracted_record_count_total: int = 0
+    extracted_degree_count_total: int = 0
+    visited_count_total: int = 0
+    root_visited_count: int = 0
+    root_visited_urls: set[str] = field(default_factory=set)
+    memory_released: bool = False
     tag_class_logged_urls: set[str] = field(default_factory=set)
     robots_parser: Optional[RobotFileParser] = None
     robots_ready: bool = False
@@ -108,6 +119,7 @@ class SiteState:
     )
 
     def __post_init__(self) -> None:
+        self.start_url_set = set(self.start_urls)
         for url in self.start_urls:
             self.enqueue(url=url, depth=0)
 
@@ -199,17 +211,21 @@ class SiteState:
 
     def start_task(self, task: URLTask) -> None:
         self.mark_access()
-        self.visited.add(task.url)
+        if task.url not in self.visited:
+            self.visited.add(task.url)
+            self.visited_count_total += 1
+            if task.url in self.start_url_set and task.url not in self.root_visited_urls:
+                self.root_visited_urls.add(task.url)
+                self.root_visited_count += 1
         self.in_progress_urls.add(task.url)
 
     def finish_task(self, task_url: str) -> None:
         self.in_progress_urls.discard(task_url)
 
     def record_links(self, source_url: str, links: list[str]) -> None:
-        self.extracted_links_by_url[source_url] = links
+        return
 
     def record_attempt(self, attempt: CrawlAttempt, elapsed_sec: float) -> None:
-        self.crawl_attempts.append(attempt)
         self.log["total_time"] += elapsed_sec
         if attempt.ok:
             self.log["success_count"] += 1
@@ -218,8 +234,32 @@ class SiteState:
         if attempt.used_fallback:
             self.log["fallback_count"] += 1
 
+    def release_runtime_memory(self) -> None:
+        if self.memory_released:
+            return
+        self.visited.clear()
+        self.extracted_links_by_url.clear()
+        self.crawl_attempts.clear()
+        self.tag_class_logged_urls.clear()
+        self.memory_released = True
+
     def add_extracted_record(self, record: dict[str, Any]) -> None:
-        self.extracted_records.append(record)
+        self.extracted_record_count_total += 1
+        degrees = record.get("degrees", [])
+        if isinstance(degrees, list):
+            self.extracted_degree_count_total += len(degrees)
+        if self.record_sink is not None:
+            self.record_sink(self.domain, record)
+        if self.retain_extracted_records:
+            self.extracted_records.append(record)
+
+    def add_error(self, error_msg: str) -> None:
+        if self.error_sink is not None:
+            self.error_sink(self.domain, error_msg)
+        self.errors.append(error_msg)
+        if self.error_buffer_limit > 0 and len(self.errors) > self.error_buffer_limit:
+            overflow = len(self.errors) - self.error_buffer_limit
+            del self.errors[:overflow]
 
 @dataclass
 class SeedDiscovery:

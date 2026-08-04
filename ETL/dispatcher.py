@@ -59,7 +59,7 @@ async def _seed_sitemaps_with_limits(sites: list[SiteState]) -> tuple[int, int]:
             site = by_domain.get(domain)
             msg = f"sitemap_seed_failed domain={domain}: {type(exc).__name__}: {exc}"
             if site is not None:
-                site.errors.append(msg)
+                site.add_error(msg)
             print(f"[DISPATCHER][WARN] {msg}", flush=True)
 
         if completed % progress_every == 0 or completed == len(tasks):
@@ -90,17 +90,14 @@ def _active_sites(sites: list[SiteState]) -> list[SiteState]:
 
 
 def _progress_snapshot(sites: list[SiteState], root_target_total: int) -> dict[str, int | float]:
-    visited_total = sum(len(site.visited) for site in sites)
+    visited_total = sum(site.visited_count_total for site in sites)
     pending_total = sum(len(site.queue) for site in sites)
     in_progress_total = sum(len(site.in_progress_urls) for site in sites)
     success_total = sum(site.success_count for site in sites)
     error_total = sum(site.error_count for site in sites)
     completed_total = success_total + error_total
     known_total = visited_total + pending_total
-    root_visited = sum(
-        sum(1 for url in site.start_urls if url in site.visited)
-        for site in sites
-    )
+    root_visited = sum(site.root_visited_count for site in sites)
     known_progress_pct = (completed_total / known_total * 100.0) if known_total > 0 else 100.0
     root_progress_pct = (root_visited / root_target_total * 100.0) if root_target_total > 0 else 100.0
     return {
@@ -138,7 +135,7 @@ def _stuck_site_lines(sites: list[SiteState], limit: int = 5) -> list[str]:
                 ready_in=site.seconds_until_ready(),
                 crawl_delay=site.crawl_delay,
                 last_access_age=last_access_age,
-                visited=len(site.visited),
+                visited=site.visited_count_total,
                 success=site.success_count,
                 error=site.error_count,
             )
@@ -153,6 +150,10 @@ async def run_dispatcher(
     timeout_sec: int = 30,
     progress_interval_sec: int = 10,
     queue_log_enabled: bool = True,
+    record_sink=None,
+    error_sink=None,
+    error_buffer_limit: int = 200,
+    retain_extracted_records: bool = True,
 ) -> list[SiteState]:
     """crawl-delay 中のサイトは待機し、ready な他ドメインを進める。"""
     # timeout_sec は httpx リクエストのタイムアウト秒。
@@ -165,6 +166,12 @@ async def run_dispatcher(
     pending_queue_limit = _env_int("ETL_MAXPENDING_QUEUE_ITEMS", 2000)
     enqueue_budget = QueueBudget(limit=pending_queue_limit)
     sites = build_site_states(targets, enqueue_budget=enqueue_budget)
+    for site in sites:
+        site.record_sink = record_sink
+        site.error_sink = error_sink
+        site.error_buffer_limit = max(0, int(error_buffer_limit))
+        site.retain_extracted_records = retain_extracted_records
+
     root_target_total = len(targets)
     if not sites:
         return sites
@@ -310,6 +317,12 @@ async def run_dispatcher(
                     last_progress_at = now
 
                 active = _active_sites(sites)
+                for site in sites:
+                    if site.status != "active":
+                        continue
+                    if site.has_pending() or site.in_progress_urls:
+                        continue
+                    site.release_runtime_memory()
                 if not active:
                     break
 
@@ -329,7 +342,7 @@ async def run_dispatcher(
                 if pending:
                     for site, task in worker_tasks:
                         if task in pending:
-                            site.errors.append(
+                            site.add_error(
                                 f"worker_timeout domain={site.domain} timeout={worker_timeout_sec}s"
                             )
                             task.cancel()

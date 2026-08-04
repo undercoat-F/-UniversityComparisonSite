@@ -3,7 +3,6 @@ import ast
 import json
 import os
 import psycopg2
-import shutil
 from datetime import datetime
 import traceback
 from urllib.parse import urlparse
@@ -12,7 +11,6 @@ from dotenv import load_dotenv
 
 from ETL.dispatcher import run_dispatcher
 from ETL.resource_recorder import start_resource_monitor, stop_resource_monitor
-from crawler.metrics import analyze_degree_duplicates
 from db.schema_config import get_observer_schema, get_public_schema, get_table_ref, set_search_path
 
 load_dotenv(encoding="utf-8-sig")
@@ -51,20 +49,11 @@ def write_etl_error_log(url, stage, exc, log_dt):
         f.write("\n")
 
 
-def make_site_slug(url):
-    parsed = urlparse(url)
-    path = parsed.path.strip("/").replace("/", "__") or "root"
-    return f"{parsed.netloc}__{path}"
-
-
-def snapshot_csv_outputs(url, log_dt, src_dir="db/csv_output"):
-    snapshot_dir = os.path.join("db", "csv_output_snapshots", f"{log_dt}__{make_site_slug(url)}")
-    os.makedirs(snapshot_dir, exist_ok=True)
-
-    for name in ("universities.csv", "degree_programs.csv", "tuition_patterns.csv", "program_tuition_map.csv"):
-        src = os.path.join(src_dir, name)
-        if os.path.exists(src):
-            shutil.copy2(src, os.path.join(snapshot_dir, name))
+def write_etl_error_message(url, stage, message, log_dt):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    os.makedirs("log", exist_ok=True)
+    with open(f"log/etl_error_log_{log_dt}.txt", "a", encoding="utf-8") as f:
+        f.write(f"[{ts}] stage={stage} url={url} error=RuntimeError: {message}\n")
 
 
 def load_targets_from_db():
@@ -197,54 +186,81 @@ def filter_targets_by_recent_universities(targets: list[tuple[str, int]], months
     return filtered
 
 
-def write_extraction_logs(site_states, log_dt):
-    os.makedirs("log", exist_ok=True)
-    jsonl_path = os.path.join("log", f"extracted_records_{log_dt}.jsonl")
-    summary_path = os.path.join("log", f"extracted_summary_{log_dt}.txt")
-
-    total_records = 0
-    total_degrees = 0
-    with open(jsonl_path, "w", encoding="utf-8") as jf:
+def summarize_extractions(site_states):
+    total_records = sum(getattr(site, "extracted_record_count_total", len(site.extracted_records)) for site in site_states)
+    total_degrees = sum(getattr(site, "extracted_degree_count_total", 0) for site in site_states)
+    if total_degrees == 0:
         for site in site_states:
             for record in site.extracted_records:
-                total_records += 1
-                degree_count = len(record.get("degrees", []))
-                total_degrees += degree_count
-                payload = {
-                    "domain": site.domain,
-                    "url": record.get("url"),
-                    "title": record.get("title"),
-                    "timestamp": record.get("timestamp"),
-                    "country": record.get("country"),
-                    "degree_count": degree_count,
-                    "degrees": record.get("degrees", []),
-                }
-                jf.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                total_degrees += len(record.get("degrees", []))
+    return total_records, total_degrees
 
+
+def _write_crawl_start_log(log_dt: str, started_at: str, target_count: int) -> None:
+    with open(f"log/crawl_log_{log_dt}.txt", "a", encoding="utf-8") as f:
+        f.write(f"\n{'#'*10}\n")
+        f.write(f"# ETL start: {started_at} ({target_count} sites)\n")
+        f.write(f"{'#'*10}\n\n")
+
+
+def _write_crawl_finish_log(
+    log_dt: str,
+    finished_at: str,
+    total_records: int,
+    total_degrees: int,
+    jsonl_path: str,
+    summary_path: str | None,
+) -> None:
+    with open(f"log/crawl_log_{log_dt}.txt", "a", encoding="utf-8") as f:
+        f.write(f"{'#'*10}\n")
+        f.write(f"# ETL finished: {finished_at}\n")
+        f.write(f"# extracted records: {total_records} / extracted degrees: {total_degrees}\n")
+        f.write(f"# extracted JSONL: {jsonl_path}\n")
+        if summary_path:
+            f.write(f"# extracted summary: {summary_path}\n")
+        f.write(f"{'#'*10}\n\n")
+
+
+def _write_summary_file(summary_path: str, site_states, total_records: int, total_degrees: int) -> None:
     with open(summary_path, "w", encoding="utf-8") as sf:
         sf.write(f"records={total_records}\n")
         sf.write(f"degrees={total_degrees}\n")
         for site in site_states:
             sf.write(
-                f"domain={site.domain} records={len(site.extracted_records)} "
+                f"domain={site.domain} records={site.extracted_record_count_total} "
                 f"success={site.success_count} errors={site.error_count} "
                 f"fallback={site.fallback_count} sitemap_candidates={len(site.sitemap_candidates)}\n"
             )
 
-    return jsonl_path, summary_path, total_records, total_degrees
+
+def _build_record_sink(record_fp, counters: dict[str, int]):
+    def _record_sink(domain: str, record: dict):
+        degrees = record.get("degrees", [])
+        degree_count = len(degrees) if isinstance(degrees, list) else 0
+        counters["records"] += 1
+        counters["degrees"] += degree_count
+        payload = {
+            "domain": domain,
+            "url": record.get("url"),
+            "title": record.get("title"),
+            "timestamp": record.get("timestamp"),
+            "country": record.get("country"),
+            "degree_count": degree_count,
+            "degrees": degrees if isinstance(degrees, list) else [],
+        }
+        record_fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    return _record_sink
 
 
-def summarize_extractions(site_states):
-    total_records = 0
-    total_degrees = 0
-    for site in site_states:
-        total_records += len(site.extracted_records)
-        for record in site.extracted_records:
-            total_degrees += len(record.get("degrees", []))
-    return total_records, total_degrees
+def _build_error_sink(log_dt: str):
+    def _error_sink(domain: str, message: str):
+        write_etl_error_message(domain, "crawl", message, log_dt)
+
+    return _error_sink
 
 
-async def run_etl(*, persist_extraction_logs: bool = True):
+async def run_etl(*, persist_summary: bool = True):
     log_dt = datetime.now().strftime("%Y%m%d_%H%M%S")
     targets = load_targets()
     skip_months = _env_int(RECENT_SKIP_MONTHS_ENV, 6)
@@ -252,48 +268,59 @@ async def run_etl(*, persist_extraction_logs: bool = True):
     ts_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[SCHEDULER] ETL start targets={len(targets)}", flush=True)
     os.makedirs("log", exist_ok=True)
-    with open(f"log/crawl_log_{log_dt}.txt", "a", encoding="utf-8") as f:
-        f.write(f"\n{'#'*10}\n")
-        f.write(f"# ETL start: {ts_start} ({len(targets)} sites)\n")
-        f.write(f"{'#'*10}\n\n")
+    jsonl_path = os.path.join("log", f"extracted_records_{log_dt}.jsonl")
+    summary_path = os.path.join("log", f"extracted_summary_{log_dt}.txt") if persist_summary else None
+    counters = {"records": 0, "degrees": 0}
+
+    _write_crawl_start_log(log_dt=log_dt, started_at=ts_start, target_count=len(targets))
+
+    error_buffer_limit = _env_int("ETL_ERROR_BUFFER_LIMIT", 100)
+    retain_extracted_records = (_env_int("ETL_RETAIN_EXTRACTED_RECORDS", 0) != 0)
 
     monitor_state = start_resource_monitor(log_dt)
-    try:
-        site_states = await run_dispatcher(targets)
-    except Exception as e:
-        write_etl_error_log("ALL", "dispatcher", e, log_dt)
-        raise
-    finally:
-        stop_resource_monitor(monitor_state)
+    with open(jsonl_path, "w", encoding="utf-8") as record_fp:
+        record_sink = _build_record_sink(record_fp, counters)
+        error_sink = _build_error_sink(log_dt)
+
+        try:
+            site_states = await run_dispatcher(
+                targets,
+                record_sink=record_sink,
+                error_sink=error_sink,
+                error_buffer_limit=error_buffer_limit,
+                retain_extracted_records=retain_extracted_records,
+            )
+        except Exception as e:
+            write_etl_error_log("ALL", "dispatcher", e, log_dt)
+            raise
+        finally:
+            stop_resource_monitor(monitor_state)
 
     for site in site_states:
         print(
             "[SCHEDULER] "
             f"domain={site.domain} success={site.success_count} errors={site.error_count} "
-            f"fallback={site.fallback_count} visited={len(site.visited)} "
+            f"fallback={site.fallback_count} visited={site.visited_count_total} "
             f"sitemap_candidates={len(site.sitemap_candidates)}"
         )
-        if site.error_count:
-            for error_msg in site.errors:
-                write_etl_error_log(site.domain, "crawl", RuntimeError(error_msg), log_dt)
 
-    if persist_extraction_logs:
-        jsonl_path, summary_path, total_records, total_degrees = write_extraction_logs(site_states, log_dt)
-    else:
-        jsonl_path = None
-        summary_path = None
+    total_records = counters["records"]
+    total_degrees = counters["degrees"]
+    if total_records == 0 and retain_extracted_records:
         total_records, total_degrees = summarize_extractions(site_states)
 
+    if summary_path:
+        _write_summary_file(summary_path, site_states, total_records, total_degrees)
+
     ts_end = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(f"log/crawl_log_{log_dt}.txt", "a", encoding="utf-8") as f:
-        f.write(f"{'#'*10}\n")
-        f.write(f"# ETL finished: {ts_end}\n")
-        f.write(f"# extracted records: {total_records} / extracted degrees: {total_degrees}\n")
-        if jsonl_path:
-            f.write(f"# extracted JSONL: {jsonl_path}\n")
-        if summary_path:
-            f.write(f"# extracted summary: {summary_path}\n")
-        f.write(f"{'#'*10}\n\n")
+    _write_crawl_finish_log(
+        log_dt=log_dt,
+        finished_at=ts_end,
+        total_records=total_records,
+        total_degrees=total_degrees,
+        jsonl_path=jsonl_path,
+        summary_path=summary_path,
+    )
 
     print("\nScheduler run completed")
     print(f"Error details: log/etl_error_log_{log_dt}.txt")
