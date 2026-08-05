@@ -1,0 +1,39 @@
+name: university-comparison-site
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: university-comparison-site:local
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  etl:
+    build:
+      context: .
+      dockerfile: Dockerfile.etl
+    image: university-comparison-etl:local
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    profiles:
+      - etl
+    volumes:
+      - ./log:/app/log
+    restart: "no"
+
+  observe:
+    build:
+      context: .
+      dockerfile: Dockerfile.observe
+    image: university-comparison-observe:local
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    profiles:
+      - observe
+    volumes:
+      - ./log:/app/log
+    restart: "no"
